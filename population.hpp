@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <limits>
 
+#include "constants.hpp"
 #include "simulation.hpp"
 
 // ---------------------------------------------------------------------------
@@ -138,11 +139,11 @@ static void generate_random_state(double state[STATE_SIZE]) {
     double *vx = state + 6;
     double *vy = state + 9;
 
-    // Generate positions in a box [-3, 3], but ensure no pair is too close
+    // Generate positions in a box, but ensure no pair is too close
     for (int attempt = 0; attempt < 100; ++attempt) {
         for (int i = 0; i < 3; ++i) {
-            x[i] = rand_uniform(-3.0, 3.0);
-            y[i] = rand_uniform(-3.0, 3.0);
+            x[i] = rand_uniform(POSITION_BOX_MIN, POSITION_BOX_MAX);
+            y[i] = rand_uniform(POSITION_BOX_MIN, POSITION_BOX_MAX);
         }
 
         // Check minimum distance (avoid initial collision)
@@ -150,12 +151,12 @@ static void generate_random_state(double state[STATE_SIZE]) {
         double d02 = std::hypot(x[0] - x[2], y[0] - y[2]);
         double d12 = std::hypot(x[1] - x[2], y[1] - y[2]);
 
-        if (d01 < 0.1 || d02 < 0.1 || d12 < 0.1) continue;
+        if (d01 < POSITION_MIN_DIST || d02 < POSITION_MIN_DIST || d12 < POSITION_MIN_DIST) continue;
 
         // Also avoid a body being too far from the origin
         bool too_far = false;
         for (int i = 0; i < 3; ++i) {
-            if (std::abs(x[i]) > 4.0 || std::abs(y[i]) > 4.0) {
+            if (std::abs(x[i]) > POSITION_MAX_DIST || std::abs(y[i]) > POSITION_MAX_DIST) {
                 too_far = true;
                 break;
             }
@@ -173,10 +174,10 @@ static void generate_random_state(double state[STATE_SIZE]) {
         y[i] -= cm_y;
     }
 
-    // Generate random velocities in [-1.2, 1.2], then zero total momentum
+    // Generate random velocities, then zero total momentum
     for (int i = 0; i < 3; ++i) {
-        vx[i] = rand_uniform(-1.2, 1.2);
-        vy[i] = rand_uniform(-1.2, 1.2);
+        vx[i] = rand_uniform(VELOCITY_RANGE_MIN, VELOCITY_RANGE_MAX);
+        vy[i] = rand_uniform(VELOCITY_RANGE_MIN, VELOCITY_RANGE_MAX);
     }
 
     // Center velocities
@@ -203,7 +204,7 @@ static void crossover(
 {
     // Blend (uniform crossover of each component)
     for (int i = 0; i < STATE_SIZE; ++i) {
-        double alpha = rand_uniform(-0.2, 1.2);  // extrapolate a bit
+        double alpha = rand_uniform(MUTATION_ALPHA_MIN, MUTATION_ALPHA_MAX);  // extrapolate a bit
         child[i] = alpha * p1[i] + (1.0 - alpha) * p2[i];
     }
 
@@ -238,9 +239,8 @@ static FitnessResult evaluate_fitness(const double state[STATE_SIZE]) {
     // Base fitness: number of steps survived
     double base = (double)sim.steps;
 
-    // Bonus for closest return: exp(-dist / sigma), sigma = 0.5
-    double sigma = 0.5;
-    double bonus = std::exp(-fr.closest_return / sigma);
+    // Bonus for closest return: exp(-dist / sigma)
+    double bonus = std::exp(-fr.closest_return / RETURN_BONUS_SIGMA);
 
     // Combined score
     fr.score = base * (1.0 + bonus);

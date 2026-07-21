@@ -14,10 +14,10 @@ endif
 
 all: model 3body
 
-model: model.cpp simulation.hpp population.hpp
+model: model.cpp simulation.hpp population.hpp constants.hpp
 	$(CXX) $(CXXFLAGS) model.cpp -o model $(LDFLAGS)
 
-3body: 3body.cpp
+3body: 3body.cpp simulation.hpp constants.hpp
 	$(CXX) $(CXXFLAGS) 3body.cpp -o 3body $(LDFLAGS)
 
 # Quick test: run the model for a few generations

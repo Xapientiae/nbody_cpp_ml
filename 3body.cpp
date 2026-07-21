@@ -22,98 +22,9 @@
  *     0.4662036850  0.4323657300
  */
 
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-constexpr double G  = 1.0;           // gravitational constant
-constexpr double dt = 0.01;          // timestep
-
-// Stopping thresholds
-constexpr double COLLISION_DIST = 0.01;   // AU
-constexpr double ESCAPE_DIST    = 100.0;  // AU
-
-// Yoshida 4th-order coefficients (cbrt(2) ≈ 1.2599210498948732)
-// c1 = 1/(2 - 2^(1/3)),  c0 = 1 - 2*c1
-constexpr double c1 = 1.351207191959657;
-constexpr double c0 = -1.702414383919314;
-
-constexpr int N = 3;         // number of bodies
-
-constexpr int MAX_STEPS = 20000;
-
-// ---------------------------------------------------------------------------
-// Acceleration calculator
-// ---------------------------------------------------------------------------
-static void compute_accelerations(
-    const double x[3], const double y[3],
-    const double m[3],
-    double ax[3], double ay[3])
-{
-    ax[0] = 0.0; ay[0] = 0.0;
-    ax[1] = 0.0; ay[1] = 0.0;
-    ax[2] = 0.0; ay[2] = 0.0;
-
-    for (int i = 0; i < N; ++i) {
-        for (int j = i + 1; j < N; ++j) {
-            double dx = x[j] - x[i];
-            double dy = y[j] - y[i];
-            double r2 = dx * dx + dy * dy;
-            double r  = sqrt(r2);
-            double r3 = r2 * r;
-
-            double f = G / r3;               // force factor
-            double f_i = f * m[j];           // acceleration on i from j
-            double f_j = f * m[i];           // acceleration on j from i
-
-            ax[i] += f_i * dx;
-            ay[i] += f_i * dy;
-            ax[j] -= f_j * dx;
-            ay[j] -= f_j * dy;
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// One full Yoshida 4th-order step (symplectic)
-// ---------------------------------------------------------------------------
-static void yoshida_step(
-    double x[3], double y[3],
-    double vx[3], double vy[3],
-    const double m[3])
-{
-    // Coefficients for the three substages
-    const double w[3] = {c1, c0, c1};
-
-    for (int s = 0; s < 3; ++s) {
-        double ws = w[s];
-        double hh = 0.5 * ws * dt;   // half-step for position
-        double h  = ws * dt;         // full-step for velocity
-
-        // half position drift
-        for (int i = 0; i < N; ++i) {
-            x[i] += hh * vx[i];
-            y[i] += hh * vy[i];
-        }
-
-        // full velocity kick (using updated positions)
-        double ax[3], ay[3];
-        compute_accelerations(x, y, m, ax, ay);
-        for (int i = 0; i < N; ++i) {
-            vx[i] += h * ax[i];
-            vy[i] += h * ay[i];
-        }
-
-        // second half position drift
-        for (int i = 0; i < N; ++i) {
-            x[i] += hh * vx[i];
-            y[i] += hh * vy[i];
-        }
-    }
-}
+#include "simulation.hpp"
 
 // ---------------------------------------------------------------------------
 // Read initial conditions from a file/stream
@@ -200,7 +111,7 @@ int main(int argc, char *argv[])
 
     for (step = 1; step <= MAX_STEPS; ++step) {
         yoshida_step(x, y, vx, vy, m);
-        t += dt;
+        t += DT;
 
         // Print every step
         printf("%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n",

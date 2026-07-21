@@ -184,7 +184,18 @@ int main(int argc, char *argv[]) {
         cfg.seed = (int)std::time(nullptr) ^
                    (int)std::chrono::steady_clock::now().time_since_epoch().count();
     }
-    srand(cfg.seed);
+    
+    // Seed the thread-local RNGs in population.hpp
+    // Each thread will get a different seed derived from the main seed
+    #ifdef _OPENMP
+        #pragma omp parallel
+        {
+            int thread_num = omp_get_thread_num();
+            // Derive a unique seed for each thread
+            unsigned int thread_seed = cfg.seed + thread_num * 1000;
+            rng_local.seed(thread_seed);
+        }
+    #endif
 
     // --- Load archive ---
     std::vector<std::vector<double>> archive;

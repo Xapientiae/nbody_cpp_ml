@@ -4,16 +4,11 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include "constants.hpp"
 
 // ---------------------------------------------------------------------------
-// Constants
+// Constants are now defined in constants.hpp
 // ---------------------------------------------------------------------------
-constexpr double G              = 1.0;
-constexpr double DT             = 0.01;
-constexpr double COLLISION_DIST = 0.05;
-constexpr int    MAX_STEPS      = 100000;   // increased from 20000
-constexpr int    N              = 3;        // number of bodies
-constexpr int    STATE_SIZE     = 12;       // x1..3, y1..3, vx1..3, vy1..3
 
 // ---------------------------------------------------------------------------
 // Stop reasons
@@ -165,9 +160,7 @@ static void yoshida_step(
     double vx[3], double vy[3],
     const double m[3])
 {
-    constexpr double c1 = 1.351207191959657;
-    constexpr double c0 = -1.702414383919314;
-    const double w[3] = {c1, c0, c1};
+    const double w[3] = {YOSHIDA_C1, YOSHIDA_C0, YOSHIDA_C1};
 
     for (int s = 0; s < 3; ++s) {
         double hh = 0.5 * w[s] * DT;
