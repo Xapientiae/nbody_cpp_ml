@@ -172,13 +172,33 @@ static double compute_archive_penalty(double distance, double threshold) {
 }
 
 // ---------------------------------------------------------------------------
-// Check if state is novel enough to add to archive
+// Compute archive distance using checkpoint states (time-aware similarity).
+// Checks at multiple time points and returns the minimum distance.
+// This catches systems that might look similar at different times.
 // ---------------------------------------------------------------------------
-static bool is_novel(const double state[STATE_SIZE],
-                     const std::vector<std::vector<double>>& archive,
-                     double threshold)
+static double archive_distance_checkpoints(
+    const SimulationResult& sim_result,
+    const std::vector<std::vector<double>>& archive)
 {
-    double d = archive_distance(state, archive);
+    if (archive.empty()) return INFINITY;
+    
+    double min_dist = INFINITY;
+    for (int c = 0; c < sim_result.checkpoint_count; ++c) {
+        double d = archive_distance(sim_result.checkpoint_states[c], archive);
+        if (d < min_dist) min_dist = d;
+    }
+    return min_dist;
+}
+
+// ---------------------------------------------------------------------------
+// Check if state is novel enough to add to archive (using checkpoint states)
+// ---------------------------------------------------------------------------
+static bool is_novel_checkpoints(
+    const SimulationResult& sim_result,
+    const std::vector<std::vector<double>>& archive,
+    double threshold)
+{
+    double d = archive_distance_checkpoints(sim_result, archive);
     return d >= threshold;
 }
 
@@ -279,6 +299,7 @@ int main(int argc, char *argv[]) {
     std::vector<double> best_state(STATE_SIZE);
     int best_steps = 0;
     double best_return = 0.0;
+    SimulationResult best_sim_result;  // Store full simulation result for checkpoint-based archive check
 
     auto update_best = [&](size_t idx) {
         if (fitness[idx].score > best_score) {
@@ -286,6 +307,7 @@ int main(int argc, char *argv[]) {
             best_state = population[idx];
             best_steps = fitness[idx].steps;
             best_return = fitness[idx].closest_return;
+            best_sim_result = fitness[idx].sim_result;
         }
     };
 
@@ -340,8 +362,9 @@ int main(int argc, char *argv[]) {
             // Evaluate
             next_fitness[i] = evaluate_fitness(next_pop[i].data());
 
-            // Archive penalty: exponential decay based on distance
-            double d_arch = archive_distance(next_pop[i].data(), archive);
+            // Archive penalty: exponential decay based on distance at checkpoints
+            // This catches systems that might look similar at different times
+            double d_arch = archive_distance_checkpoints(next_fitness[i].sim_result, archive);
             double penalty = compute_archive_penalty(d_arch, cfg.archive_dist_threshold);
             next_fitness[i].score *= (1.0 - penalty);
         }
@@ -384,7 +407,8 @@ int main(int argc, char *argv[]) {
 
     // Add final best to archive ONLY if it has MAX_STEPS (full lifetime)
     // Note: simulation reports MAX_STEPS+1 when it runs to completion
-    if (best_steps >= MAX_STEPS && is_novel(best_state.data(), archive, cfg.archive_dist_threshold)) {
+    // Use checkpoint-based comparison to catch time-aware similarity
+    if (best_steps >= MAX_STEPS && is_novel_checkpoints(best_sim_result, archive, cfg.archive_dist_threshold)) {
         // Normalize before saving to ensure consistent reference frame
         std::vector<double> best_state_normalized = best_state;
         normalize_state(best_state_normalized.data());

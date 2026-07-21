@@ -69,10 +69,15 @@ setup() {
 # Deep run: one big search
 # ---------------------------------------------------------------------------
 run_deep() {
-    log "Deep mode: popsize=1024, generations=100"
     local DEEP_SEED=$(date +%s)
     ./model --popsize=8192 --generations=12 2>&1 | tee -a "$LOG" | grep -E '(Gen |Done)'
     ok "Deep search complete"
+}
+
+run_lucky() {
+    local DEEP_SEED=$(date +%s)
+    ./model --popsize=50000 --generations=1 2>&1 | tee -a "$LOG" | grep -E '(Gen |Done)'
+    ok "Lucky search complete"
 }
 
 # ---------------------------------------------------------------------------
@@ -227,6 +232,11 @@ case "${1:-quick}" in
     deep)
         setup
         run_deep
+        run_summary
+        ;;
+    lucky)
+        setup
+        run_lucky
         run_summary
         ;;
     all)

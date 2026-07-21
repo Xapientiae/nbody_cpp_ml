@@ -30,6 +30,8 @@ struct SimulationResult {
     double closest_return;        // best distance to initial state (permutation + rotation aware)
     double pos_end[6];            // final positions  [x1,y1, x2,y2, x3,y3]
     double vel_end[6];            // final velocities [vx1,vy1, vx2,vy2, vx3,vy3]
+    double checkpoint_states[NUM_ARCHIVE_CHECKPOINTS][STATE_SIZE];  // states at checkpoint times
+    int    checkpoint_count;      // number of checkpoints actually recorded
 };
 
 // ---------------------------------------------------------------------------
@@ -234,6 +236,7 @@ static SimulationResult run_simulation(const double state[STATE_SIZE]) {
     SimulationResult result;
     result.closest_return = INFINITY;
     result.reason = StopReason::MAX_STEPS;
+    result.checkpoint_count = 0;
 
     // Track closest return only after the initial transient (5% of max steps)
     const int transient_steps = MAX_STEPS / 20;
@@ -247,6 +250,21 @@ static SimulationResult run_simulation(const double state[STATE_SIZE]) {
             double d = permutation_rotation_distance(x, y, x0, y0);
             if (d < result.closest_return)
                 result.closest_return = d;
+        }
+
+        // --- checkpoint recording for archive comparison ---
+        for (int c = 0; c < NUM_ARCHIVE_CHECKPOINTS; ++c) {
+            if (step == ARCHIVE_CHECKPOINT_STEPS[c] && result.checkpoint_count <= c) {
+                // Record the current state at this checkpoint
+                for (int j = 0; j < 3; ++j) {
+                    result.checkpoint_states[c][j] = x[j];
+                    result.checkpoint_states[c][j + 3] = y[j];
+                    result.checkpoint_states[c][j + 6] = vx[j];
+                    result.checkpoint_states[c][j + 9] = vy[j];
+                }
+                result.checkpoint_count = c + 1;
+                break;
+            }
         }
 
         // --- collision check ---

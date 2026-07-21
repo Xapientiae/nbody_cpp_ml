@@ -227,12 +227,14 @@ struct FitnessResult {
     double score;
     int    steps;
     double closest_return;
+    SimulationResult sim_result;  // Full simulation result including checkpoint states
 };
 
 static FitnessResult evaluate_fitness(const double state[STATE_SIZE]) {
     SimulationResult sim = run_simulation(state);
 
     FitnessResult fr;
+    fr.sim_result = sim;
     fr.steps = sim.steps;
     fr.closest_return = (sim.closest_return == INFINITY) ? 100.0 : sim.closest_return;
 

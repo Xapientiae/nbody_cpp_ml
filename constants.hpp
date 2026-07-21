@@ -39,6 +39,13 @@ constexpr double RETURN_BONUS_SIGMA = 0.5;  // sigma for return distance bonus
 constexpr double TRANSIENT_RATIO = 20;      // transient period = MAX_STEPS / this
 
 // ---------------------------------------------------------------------------
+// Archive Checkpoint Times (for time-aware similarity detection)
+// These are step numbers at which to check archive distance
+// ---------------------------------------------------------------------------
+constexpr int ARCHIVE_CHECKPOINT_STEPS[] = {3000, 7000, 13000, 17000, 29000, 51000, 67000, 100000};
+constexpr int NUM_ARCHIVE_CHECKPOINTS = 8;
+
+// ---------------------------------------------------------------------------
 // Archive / Diversity Parameters
 // ---------------------------------------------------------------------------
 constexpr double DEFAULT_ARCHIVE_DIST_THRESHOLD = 0.3; // min dist from archive entries (stricter)
