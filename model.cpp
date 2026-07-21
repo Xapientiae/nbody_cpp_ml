@@ -409,9 +409,10 @@ int main(int argc, char *argv[]) {
     // Note: simulation reports MAX_STEPS+1 when it runs to completion
     // Use checkpoint-based comparison to catch time-aware similarity
     if (best_steps >= MAX_STEPS && is_novel_checkpoints(best_sim_result, archive, cfg.archive_dist_threshold)) {
-        // Normalize before saving to ensure consistent reference frame
+        // Normalize before saving to ensure consistent reference frame and size
         std::vector<double> best_state_normalized = best_state;
         normalize_state(best_state_normalized.data());
+        normalize_scale(best_state_normalized.data());
         save_state_to_archive(cfg.archive_file.c_str(), best_state_normalized.data(),
                               best_score, best_steps, best_return, cfg.seed);
         archive.push_back(best_state_normalized);

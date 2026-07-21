@@ -62,6 +62,36 @@ static void normalize_state(double state[STATE_SIZE]) {
 }
 
 // ---------------------------------------------------------------------------
+// Normalize scale: scale positions and velocities so that sum of squared radii = 12
+// This ensures orbits of different sizes are compared fairly.
+// In a scaled system, both positions and velocities scale the same way.
+// ---------------------------------------------------------------------------
+static void normalize_scale(double state[STATE_SIZE]) {
+    double *x  = state;       // [0..2]
+    double *y  = state + 3;   // [3..5]
+    double *vx = state + 6;   // [6..8]
+    double *vy = state + 9;   // [9..11]
+
+    // Compute sum of squared radii
+    double r2 = 0.0;
+    for (int i = 0; i < 3; ++i) {
+        r2 += x[i] * x[i] + y[i] * y[i];
+    }
+
+    // Target: sum of squared radii = 12
+    constexpr double TARGET_R2 = 12.0;
+    double scale = std::sqrt(TARGET_R2 / r2);
+
+    // Apply scaling to positions and velocities
+    for (int i = 0; i < 3; ++i) {
+        x[i] *= scale;
+        y[i] *= scale;
+        vx[i] *= scale;
+        vy[i] *= scale;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Compute total energy (should be negative for bound systems)
 // Units: G=1, m_i=1
 // ---------------------------------------------------------------------------
@@ -312,6 +342,9 @@ static double permutation_rotation_state_distance(
     std::memcpy(n2, s2, sizeof(double) * STATE_SIZE);
     normalize_state(n1);
     normalize_state(n2);
+    // Also normalize scale to catch size-scaled versions of the same orbit
+    normalize_scale(n1);
+    normalize_scale(n2);
 
     const int perms[6][3] = {
         {0,1,2},{0,2,1},{1,0,2},{1,2,0},{2,0,1},{2,1,0}
@@ -477,6 +510,8 @@ static size_t load_states_from_archive(const char *filename,
             state[9] = vals[7]; state[10] = vals[9]; state[11] = vals[11];
             // Normalize the loaded state to ensure consistent reference frame
             normalize_state(state.data());
+            // Also normalize scale to ensure consistent size
+            normalize_scale(state.data());
             archive.push_back(state);
             ++count;
         }
