@@ -119,7 +119,7 @@ static void ensure_dir(const std::string& dir) {
 static void save_state(const std::string& filename, const double state[STATE_SIZE],
                        double score, int steps, double closest_return)
 {
-    FILE *fp = fopen(filename.c_str(), "w");
+    FILE *fp = fopen(filename.c_str(), "a");
     if (!fp) {
         fprintf(stderr, "ERROR: cannot write to '%s'\n", filename.c_str());
         return;
@@ -373,23 +373,18 @@ int main(int argc, char *argv[]) {
                     gen, best_score, avg, best_steps, best_return, elapsed);
         }
 
-        // Save best periodically and add to archive if novel
-        if (gen % 10 == 0) {
-            std::string best_file = cfg.output_dir + "/best.txt";
-            save_state(best_file, best_state.data(), best_score, best_steps, best_return);
-
-            if (is_novel(best_state.data(), archive, cfg.archive_dist_threshold)) {
-                save_state_to_archive(cfg.archive_file.c_str(), best_state.data(),
-                                      best_score, best_steps, best_return, cfg.seed);
-                archive.push_back(best_state);
-                if (cfg.verbose) {
-                    fprintf(stderr, "#   -> added to archive\n");
-                }
+        // Add best to archive if novel (no longer save best.txt periodically)
+        if (is_novel(best_state.data(), archive, cfg.archive_dist_threshold)) {
+            save_state_to_archive(cfg.archive_file.c_str(), best_state.data(),
+                                  best_score, best_steps, best_return, cfg.seed);
+            archive.push_back(best_state);
+            if (cfg.verbose) {
+                fprintf(stderr, "#   -> added to archive\n");
             }
         }
     }
 
-    // --- Final save ---
+    // --- Final save (append mode) ---
     std::string best_file = cfg.output_dir + "/best.txt";
     save_state(best_file, best_state.data(), best_score, best_steps, best_return);
 

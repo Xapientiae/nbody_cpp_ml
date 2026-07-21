@@ -22,7 +22,7 @@ model: model.cpp simulation.hpp population.hpp constants.hpp
 
 # Quick test: run the model for a few generations
 test: model 3body output
-	./model --popsize=64 --generations=10 --seed=42 --quiet
+	./model --popsize=256 --generations=20 --quiet
 	@echo ""
 	@echo "=== Best IC found ==="
 	cat output/best.txt

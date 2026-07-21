@@ -10,8 +10,9 @@
  *   3. A body escapes (distance > 100 AU from both other bodies)
  *
  * Compile: g++ -std=c++17 -O3 3body.cpp -o 3body
- * Run:     ./3body [input_file]
+ * Run:     ./3body [input_file] [output_interval]
  *          If no input_file given, reads from stdin.
+ *          output_interval: print every Nth step (default: 1 = all steps)
  *
  * Input file format (space/tab separated, # for comments):
  *   x1 y1 x2 y2 x3 y3 vx1 vy1 vx2 vy2 vx3 vy3
@@ -69,15 +70,36 @@ static int read_initial_conditions(
 // ---------------------------------------------------------------------------
 int main(int argc, char *argv[])
 {
-    // --- Open input file or stdin ------------------------------------------
+    // --- Parse arguments ---------------------------------------------------
+    int output_interval = 1;  // default: output every step
     FILE *fp = stdin;
+    
     if (argc > 1) {
-        fp = fopen(argv[1], "r");
-        if (!fp) {
-            fprintf(stderr, "ERROR: cannot open '%s'\n", argv[1]);
-            return 1;
+        // Check if first arg is a number (output interval) or a file
+        char *endptr;
+        long val = strtol(argv[1], &endptr, 10);
+        if (*endptr == '\0' && argc == 2) {
+            // Just an output interval, read from stdin
+            output_interval = (int)val;
+        } else {
+            // It's a filename
+            fp = fopen(argv[1], "r");
+            if (!fp) {
+                fprintf(stderr, "ERROR: cannot open '%s'\n", argv[1]);
+                return 1;
+            }
+            // Check for second arg as output interval
+            if (argc > 2) {
+                char *endptr2;
+                long val2 = strtol(argv[2], &endptr2, 10);
+                if (*endptr2 == '\0') {
+                    output_interval = (int)val2;
+                }
+            }
         }
     }
+    
+    if (output_interval < 1) output_interval = 1;
 
     // --- Read initial conditions -------------------------------------------
     double x[3], y[3], vx[3], vy[3], m[3];
@@ -108,14 +130,20 @@ int main(int argc, char *argv[])
     int step = 0;
     const char *reason = nullptr;
     int body_a = -1, body_b = -1;
+    int output_counter = 0;
 
     for (step = 1; step <= MAX_STEPS; ++step) {
         yoshida_step(x, y, vx, vy, m);
         t += DT;
 
-        // Print every step
-        printf("%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n",
-               t, x[0], y[0], x[1], y[1], x[2], y[2]);
+        // Print at specified interval
+        if (output_counter++ == 0) {
+            printf("%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n",
+                   t, x[0], y[0], x[1], y[1], x[2], y[2]);
+        }
+        if (output_counter >= output_interval) {
+            output_counter = 0;
+        }
 
         // --- Check collision and escape -----------------------------------
         // Compute all pairwise distances

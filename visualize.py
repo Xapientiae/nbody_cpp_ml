@@ -40,8 +40,8 @@ parser.add_argument("--max-frames", type=int, default=1500,
                     help="Max frames to render (0 = all, default: 1500)")
 parser.add_argument("--trail", type=int, default=40,
                     help="Trail length (default: 40)")
-parser.add_argument("--dpi", type=int, default=150,
-                    help="Figure DPI (default: 150)")
+parser.add_argument("--dpi", type=int, default=100,
+                    help="Figure DPI (default: 100)")
 parser.add_argument("--size", type=float, default=7.0,
                     help="Figure size in inches (default: 7.0)")
 parser.add_argument("--bitrate", type=str, default="8M",
@@ -159,8 +159,10 @@ def update(frame):
     ys = [y1[start:end], y2[start:end], y3[start:end]]
 
     for i in range(3):
-        pts = np.column_stack([xs[i], ys[i]])
-        trail_scatters[i].set_offsets(pts)
+        # Only update if we have points
+        if end > start:
+            pts = np.column_stack([xs[i], ys[i]])
+            trail_scatters[i].set_offsets(pts)
         current_dots[i].set_data([xs[i][-1]], [ys[i][-1]])
 
     time_text.set_text(f"t = {t[frame]:.1f}   step {frame}")
@@ -175,46 +177,65 @@ anim = FuncAnimation(fig, update, frames=n_frames,
 # ---------------------------------------------------------------------------
 # Save via ffmpeg with NVENC hardware encoding
 # ---------------------------------------------------------------------------
-# Write frames to a temporary directory as PNGs, then encode with ffmpeg.
-# This is faster than anim.save for large frame counts, and lets us use
-# the GPU encoder.
-with tempfile.TemporaryDirectory() as tmpdir:
-    pattern = os.path.join(tmpdir, "frame_%05d.png")
-    print(f"  Writing frames to {tmpdir} ...", file=sys.stderr)
+# Use matplotlib's built-in ffmpeg writer with pipe-based output.
+# This is MUCH faster than writing individual PNG files to disk.
+print(f"  Encoding video with NVENC ...", file=sys.stderr)
 
-    # Save each frame as PNG
-    for i in range(n_frames):
-        update(i)
-        fig.savefig(pattern % (i + 1), dpi=args.dpi,
-                    facecolor="white", edgecolor="none")
-        if (i + 1) % 200 == 0:
-            print(f"    {i + 1}/{n_frames} frames", file=sys.stderr)
+# Try to use ffmpeg with NVENC via matplotlib's writer
+import matplotlib.animation as animation
 
-    print(f"  Encoding video with NVENC ...", file=sys.stderr)
+video_written = False
 
-    # Use ffmpeg with h264_nvenc for GPU-accelerated encoding
-    cmd = [
-        "ffmpeg", "-y",
-        "-framerate", str(args.fps),
-        "-i", pattern,
-        "-c:v", "h264_nvenc",
-        "-preset", "p7",          # highest quality NVENC preset
-        "-rc", "vbr",
-        "-b:v", args.bitrate,
-        "-maxrate", args.bitrate,
-        "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart",
-        args.output
-    ]
+# Convert bitrate string to int (matplotlib expects int, not string like "8M")
+bitrate_int = int(args.bitrate.replace('M', '000').replace('k', '000').replace('K', '000'))
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        # Fallback to software encoding
-        print(f"  NVENC failed ({result.stderr.strip().split(chr(10))[-1]}), "
-              f"falling back to libx264 ...", file=sys.stderr)
-        cmd[5] = "libx264"
-        cmd[6] = "-preset"
-        cmd[7] = "medium"
-        subprocess.run(cmd, check=True)
+# Try NVENC first (GPU-accelerated)
+try:
+    Writer = animation.writers['ffmpeg']
+    writer = Writer(
+        fps=args.fps,
+        codec='h264_nvenc',
+        bitrate=bitrate_int,
+        extra_args=[
+            '-preset', 'p4',
+            '-rc', 'vbr',
+            '-b:v', args.bitrate,
+            '-maxrate', args.bitrate,
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart'
+        ]
+    )
+    
+    anim.save(args.output, writer=writer, dpi=args.dpi)
+    video_written = True
+    print(f"  ✓ Used NVENC hardware encoding", file=sys.stderr)
+except Exception as e:
+    print(f"  NVENC failed: {str(e)[:100]}, trying libx264...", file=sys.stderr)
+
+# Fallback to software encoding
+if not video_written:
+    try:
+        Writer = animation.writers['ffmpeg']
+        writer = Writer(
+            fps=args.fps,
+            codec='libx264',
+            bitrate=bitrate_int,
+            extra_args=[
+                '-preset', 'ultrafast',
+                '-crf', '23',
+                '-pix_fmt', 'yuv420p',
+                '-movflags', '+faststart'
+            ]
+        )
+        
+        anim.save(args.output, writer=writer, dpi=args.dpi)
+        video_written = True
+        print(f"  ✓ Used libx264 software encoding", file=sys.stderr)
+    except Exception as e:
+        print(f"  libx264 failed: {str(e)[:100]}", file=sys.stderr)
+
+if not video_written:
+    print("ERROR: All codecs failed", file=sys.stderr)
+    sys.exit(1)
 
 print(f"Done! Saved to '{args.output}'", file=sys.stderr)

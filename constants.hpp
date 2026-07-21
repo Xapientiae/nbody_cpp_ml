@@ -15,6 +15,7 @@ constexpr int    STATE_SIZE = 12;       // x1..3, y1..3, vx1..3, vy1..3
 constexpr int    MAX_STEPS = 100000;    // maximum simulation steps
 constexpr double COLLISION_DIST = 0.05; // collision threshold (AU)
 constexpr double ESCAPE_DIST = 100.0;   // escape threshold (AU)
+constexpr double EJECTION_DIST = 15.0;  // ejection threshold (AU) - penalty if exceeded
 
 // ---------------------------------------------------------------------------
 // Yoshida 4th-order Coefficients
@@ -44,5 +45,6 @@ constexpr double DEFAULT_ARCHIVE_DIST_THRESHOLD = 0.5; // min dist from archive 
 constexpr double DEFAULT_ARCHIVE_PENALTY = 0.7;         // penalty fraction if too close
 constexpr double DEFAULT_DIVERSITY_THRESHOLD = 0.7;     // min crowding distance
 constexpr double DEFAULT_DIVERSITY_PENALTY = 0.5;       // penalty fraction
+constexpr double EJECTION_PENALTY = 0.4;                 // 40% score reduction per ejection
 
 #endif // CONSTANTS_HPP
