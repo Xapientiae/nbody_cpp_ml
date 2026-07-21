@@ -71,7 +71,7 @@ setup() {
 run_deep() {
     log "Deep mode: popsize=1024, generations=100"
     local DEEP_SEED=$(date +%s)
-    ./model --popsize=1024 --generations=100 --seed="0" 2>&1 | tee -a "$LOG" | grep -E '(Gen |Done)'
+    ./model --popsize=8192 --generations=12 2>&1 | tee -a "$LOG" | grep -E '(Gen |Done)'
     ok "Deep search complete"
 }
 

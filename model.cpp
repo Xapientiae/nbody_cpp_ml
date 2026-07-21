@@ -39,10 +39,10 @@ struct Config {
     double mutation_sigma     = 0.05;
     size_t tournament_k       = 3;
     int    elite_count        = 2;
-    double diversity_threshold = 0.7;
-    double diversity_penalty  = 0.5;
-    double archive_dist_threshold = 0.5;   // min dist from archive entries
-    double archive_penalty    = 0.7;       // penalty fraction if too close to archive
+    double diversity_threshold = DEFAULT_DIVERSITY_THRESHOLD;
+    double diversity_penalty  = DEFAULT_DIVERSITY_PENALTY;
+    double archive_dist_threshold = DEFAULT_ARCHIVE_DIST_THRESHOLD;   // min dist from archive entries
+    double archive_penalty    = DEFAULT_ARCHIVE_PENALTY;       // penalty fraction if too close to archive
     bool   verbose            = true;
     std::string output_dir    = "output";
     std::string archive_file  = "output/archive.txt";
@@ -160,6 +160,18 @@ static void append_history(const std::string& filename, int gen,
 }
 
 // ---------------------------------------------------------------------------
+// Compute archive penalty using exponential decay.
+// Penalty = max_penalty * exp(-distance / threshold * exponent)
+// At distance 0: penalty = max_penalty
+// At distance = threshold: penalty = max_penalty * exp(-exponent)
+// At distance >> threshold: penalty approaches 0
+// ---------------------------------------------------------------------------
+static double compute_archive_penalty(double distance, double threshold) {
+    if (distance >= threshold) return 0.0;
+    return ARCHIVE_PENALTY_MAX * std::exp(-distance / threshold * ARCHIVE_PENALTY_EXPONENT);
+}
+
+// ---------------------------------------------------------------------------
 // Check if state is novel enough to add to archive
 // ---------------------------------------------------------------------------
 static bool is_novel(const double state[STATE_SIZE],
@@ -211,6 +223,8 @@ int main(int argc, char *argv[]) {
                     cfg.refine_file.c_str());
             return 1;
         }
+        // Normalize the loaded state to ensure consistent reference frame
+        normalize_state(refine_base.data());
         // If mutation_sigma wasn't explicitly set (still default 0.05), use a smaller one
         cfg.mutation_sigma = std::min(cfg.mutation_sigma, 0.02);
 
@@ -290,16 +304,6 @@ int main(int argc, char *argv[]) {
                 best_score, avg, best_steps, best_return);
     }
 
-    // Add best of gen 0 to archive if novel
-    if (is_novel(best_state.data(), archive, cfg.archive_dist_threshold)) {
-        save_state_to_archive(cfg.archive_file.c_str(), best_state.data(),
-                              best_score, best_steps, best_return, cfg.seed);
-        archive.push_back(best_state);
-        if (cfg.verbose) {
-            fprintf(stderr, "#   -> added to archive\n");
-        }
-    }
-
     // --- Evolutionary loop ---
     for (int gen = 1; gen <= cfg.generations; ++gen) {
         auto t_start = std::chrono::steady_clock::now();
@@ -336,11 +340,10 @@ int main(int argc, char *argv[]) {
             // Evaluate
             next_fitness[i] = evaluate_fitness(next_pop[i].data());
 
-            // Archive penalty: if too close to an archive entry, reduce score
+            // Archive penalty: exponential decay based on distance
             double d_arch = archive_distance(next_pop[i].data(), archive);
-            if (d_arch < cfg.archive_dist_threshold) {
-                next_fitness[i].score *= (1.0 - cfg.archive_penalty);
-            }
+            double penalty = compute_archive_penalty(d_arch, cfg.archive_dist_threshold);
+            next_fitness[i].score *= (1.0 - penalty);
         }
 
         // Diversity penalty within population
@@ -373,26 +376,24 @@ int main(int argc, char *argv[]) {
                     gen, best_score, avg, best_steps, best_return, elapsed);
         }
 
-        // Add best to archive if novel (no longer save best.txt periodically)
-        if (is_novel(best_state.data(), archive, cfg.archive_dist_threshold)) {
-            save_state_to_archive(cfg.archive_file.c_str(), best_state.data(),
-                                  best_score, best_steps, best_return, cfg.seed);
-            archive.push_back(best_state);
-            if (cfg.verbose) {
-                fprintf(stderr, "#   -> added to archive\n");
-            }
-        }
     }
 
     // --- Final save (append mode) ---
     std::string best_file = cfg.output_dir + "/best.txt";
     save_state(best_file, best_state.data(), best_score, best_steps, best_return);
 
-    // Add final best to archive
-    if (is_novel(best_state.data(), archive, cfg.archive_dist_threshold)) {
-        save_state_to_archive(cfg.archive_file.c_str(), best_state.data(),
+    // Add final best to archive ONLY if it has MAX_STEPS (full lifetime)
+    // Note: simulation reports MAX_STEPS+1 when it runs to completion
+    if (best_steps >= MAX_STEPS && is_novel(best_state.data(), archive, cfg.archive_dist_threshold)) {
+        // Normalize before saving to ensure consistent reference frame
+        std::vector<double> best_state_normalized = best_state;
+        normalize_state(best_state_normalized.data());
+        save_state_to_archive(cfg.archive_file.c_str(), best_state_normalized.data(),
                               best_score, best_steps, best_return, cfg.seed);
-        archive.push_back(best_state);
+        archive.push_back(best_state_normalized);
+        if (cfg.verbose) {
+            fprintf(stderr, "# Final best added to archive (steps=%d)\n", best_steps);
+        }
     }
 
     if (cfg.verbose) {

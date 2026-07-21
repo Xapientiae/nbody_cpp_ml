@@ -294,36 +294,88 @@ static double crowding_distance(
 }
 
 // ---------------------------------------------------------------------------
-// Permutation-aware distance between two full states (positions + velocities).
-// Since bodies have equal mass, we try all 6 permutations of (0,1,2).
+// Permutation + rotation-aware distance between two full states (positions + velocities).
+// Since bodies have equal mass, we try all 6 permutations and for each find the
+// optimal 2D rotation that aligns the first set to the second.
+// Also considers time-reversed orbits (velocities negated) for time symmetry.
 // Internal layout: [x1,x2,x3, y1,y2,y3, vx1,vx2,vx3, vy1,vy2,vy3]
 // ---------------------------------------------------------------------------
-static double permutation_state_distance(
+static double permutation_rotation_state_distance(
     const double s1[STATE_SIZE],
     const double s2[STATE_SIZE])
 {
+    // Create normalized copies to ensure consistent reference frame
+    double n1[STATE_SIZE], n2[STATE_SIZE];
+    std::memcpy(n1, s1, sizeof(double) * STATE_SIZE);
+    std::memcpy(n2, s2, sizeof(double) * STATE_SIZE);
+    normalize_state(n1);
+    normalize_state(n2);
+
     const int perms[6][3] = {
         {0,1,2},{0,2,1},{1,0,2},{1,2,0},{2,0,1},{2,1,0}
     };
     double best = INFINITY;
     for (int p = 0; p < 6; ++p) {
+        // Find optimal rotation angle based on positions
+        double theta = optimal_rotation_angle(n1, n1 + 3, n2, n2 + 3, perms[p]);
+        
+        // Rotate n1 and compute distance
+        double c = std::cos(theta);
+        double s = std::sin(theta);
         double d2 = 0.0;
         for (int i = 0; i < 3; ++i) {
-            // x[i], y[i], vx[i], vy[i] vs x[perm[i]], y[perm[i]], vx[perm[i]], vy[perm[i]]
-            double dx  = s1[i]     - s2[perms[p][i]];
-            double dy  = s1[i + 3] - s2[perms[p][i] + 3];
-            double dvx = s1[i + 6] - s2[perms[p][i] + 6];
-            double dvy = s1[i + 9] - s2[perms[p][i] + 9];
+            int j = perms[p][i];
+            // Rotate positions
+            double rx = n1[i] * c - n1[i + 3] * s;
+            double ry = n1[i] * s + n1[i + 3] * c;
+            // Rotate velocities
+            double rvx = n1[i + 6] * c - n1[i + 9] * s;
+            double rvy = n1[i + 6] * s + n1[i + 9] * c;
+            
+            double dx  = rx - n2[j];
+            double dy  = ry - n2[j + 3];
+            double dvx = rvx - n2[j + 6];
+            double dvy = rvy - n2[j + 9];
             d2 += dx*dx + dy*dy + dvx*dvx + dvy*dvy;
         }
         if (d2 < best) best = d2;
     }
+    
+    // Also consider time-reversed version of s1 (negate all velocities)
+    double n1_reversed[STATE_SIZE];
+    std::memcpy(n1_reversed, n1, sizeof(double) * STATE_SIZE);
+    for (int i = 6; i < STATE_SIZE; ++i) {
+        n1_reversed[i] = -n1_reversed[i];
+    }
+    
+    for (int p = 0; p < 6; ++p) {
+        double theta = optimal_rotation_angle(n1_reversed, n1_reversed + 3, n2, n2 + 3, perms[p]);
+        
+        double c = std::cos(theta);
+        double s = std::sin(theta);
+        double d2 = 0.0;
+        for (int i = 0; i < 3; ++i) {
+            int j = perms[p][i];
+            double rx = n1_reversed[i] * c - n1_reversed[i + 3] * s;
+            double ry = n1_reversed[i] * s + n1_reversed[i + 3] * c;
+            double rvx = n1_reversed[i + 6] * c - n1_reversed[i + 9] * s;
+            double rvy = n1_reversed[i + 6] * s + n1_reversed[i + 9] * c;
+            
+            double dx  = rx - n2[j];
+            double dy  = ry - n2[j + 3];
+            double dvx = rvx - n2[j + 6];
+            double dvy = rvy - n2[j + 9];
+            d2 += dx*dx + dy*dy + dvx*dvx + dvy*dvy;
+        }
+        if (d2 < best) best = d2;
+    }
+    
     return std::sqrt(best);
 }
 
 // ---------------------------------------------------------------------------
 // Archive distance: minimum distance from state to all entries in archive.
-// Uses permutation-aware distance (bodies are indistinguishable).
+// Uses permutation + rotation-aware distance (bodies are indistinguishable).
 // Returns INFINITY if archive is empty.
 // ---------------------------------------------------------------------------
 static double archive_distance(
@@ -333,7 +385,7 @@ static double archive_distance(
     if (archive.empty()) return INFINITY;
     double min_dist = INFINITY;
     for (const auto& entry : archive) {
-        double d = permutation_state_distance(state, entry.data());
+        double d = permutation_rotation_state_distance(state, entry.data());
         if (d < min_dist) min_dist = d;
     }
     return min_dist;
@@ -421,6 +473,8 @@ static size_t load_states_from_archive(const char *filename,
             state[3] = vals[1]; state[4] = vals[3]; state[5] = vals[5];
             state[6] = vals[6]; state[7] = vals[8]; state[8] = vals[10];
             state[9] = vals[7]; state[10] = vals[9]; state[11] = vals[11];
+            // Normalize the loaded state to ensure consistent reference frame
+            normalize_state(state.data());
             archive.push_back(state);
             ++count;
         }

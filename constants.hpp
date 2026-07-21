@@ -41,10 +41,16 @@ constexpr double TRANSIENT_RATIO = 20;      // transient period = MAX_STEPS / th
 // ---------------------------------------------------------------------------
 // Archive / Diversity Parameters
 // ---------------------------------------------------------------------------
-constexpr double DEFAULT_ARCHIVE_DIST_THRESHOLD = 0.5; // min dist from archive entries
+constexpr double DEFAULT_ARCHIVE_DIST_THRESHOLD = 0.3; // min dist from archive entries (stricter)
 constexpr double DEFAULT_ARCHIVE_PENALTY = 0.7;         // penalty fraction if too close
 constexpr double DEFAULT_DIVERSITY_THRESHOLD = 0.7;     // min crowding distance
 constexpr double DEFAULT_DIVERSITY_PENALTY = 0.5;       // penalty fraction
 constexpr double EJECTION_PENALTY = 0.4;                 // 40% score reduction per ejection
+
+// ---------------------------------------------------------------------------
+// Archive Penalty Function Parameters (for linear/exponential penalty)
+// ---------------------------------------------------------------------------
+constexpr double ARCHIVE_PENALTY_MAX = 0.95;  // maximum penalty at distance 0 (increased)
+constexpr double ARCHIVE_PENALTY_EXPONENT = 3.0;  // exponential decay exponent (faster drop-off)
 
 #endif // CONSTANTS_HPP
