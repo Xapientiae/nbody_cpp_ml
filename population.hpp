@@ -170,6 +170,7 @@ static void generate_random_state(double state[STATE_SIZE]) {
     double *vy = state + 9;
 
     // Generate positions in a box, but ensure no pair is too close
+    bool found_valid = false;
     for (int attempt = 0; attempt < 100; ++attempt) {
         for (int i = 0; i < 3; ++i) {
             x[i] = rand_uniform(POSITION_BOX_MIN, POSITION_BOX_MAX);
@@ -193,7 +194,16 @@ static void generate_random_state(double state[STATE_SIZE]) {
         }
         if (too_far) continue;
 
+        found_valid = true;
         break;  // acceptable positions
+    }
+
+    // Fallback: if no valid positions found after 100 attempts, generate with relaxed constraints
+    if (!found_valid) {
+        for (int i = 0; i < 3; ++i) {
+            x[i] = rand_uniform(POSITION_BOX_MIN, POSITION_BOX_MAX);
+            y[i] = rand_uniform(POSITION_BOX_MIN, POSITION_BOX_MAX);
+        }
     }
 
     // Center positions
@@ -266,13 +276,16 @@ static FitnessResult evaluate_fitness(const double state[STATE_SIZE]) {
     FitnessResult fr;
     fr.sim_result = sim;
     fr.steps = sim.steps;
-    fr.closest_return = (sim.closest_return == INFINITY) ? 100.0 : sim.closest_return;
+    fr.closest_return = sim.closest_return;
 
     // Base fitness: number of steps survived
     double base = (double)sim.steps;
 
     // Bonus for closest return: exp(-dist / sigma)
-    double bonus = std::exp(-fr.closest_return / RETURN_BONUS_SIGMA);
+    // If no return was detected (INFINITY), bonus is 0
+    double bonus = (sim.closest_return == INFINITY)
+        ? 0.0
+        : std::exp(-sim.closest_return / RETURN_BONUS_SIGMA);
 
     // Combined score
     fr.score = base * (1.0 + bonus);
@@ -301,25 +314,25 @@ static size_t tournament_select(
     return best_idx;
 }
 
+// Forward declaration for permutation_rotation_state_distance (defined below)
+static double permutation_rotation_state_distance(
+    const double s1[STATE_SIZE],
+    const double s2[STATE_SIZE]);
+
 // ---------------------------------------------------------------------------
-// Diversity penalty: minimum Euclidean distance from state to all others
-// in the given set (excluding exclude_idx).
+// Diversity penalty: minimum permutation+rotation-aware distance from state
+// to all others in the given set (excluding exclude_idx).
+// Uses the same symmetry-aware metric as the archive distance.
 // ---------------------------------------------------------------------------
 static double crowding_distance(
     const double state[STATE_SIZE],
     const std::vector<std::vector<double>>& population,
-    size_t exclude_idx = SIZE_MAX)
+    size_t exclude_idx = std::numeric_limits<size_t>::max())
 {
     double min_dist = INFINITY;
     for (size_t j = 0; j < population.size(); ++j) {
         if (j == exclude_idx) continue;
-        const auto& other = population[j];
-        double d2 = 0.0;
-        for (int i = 0; i < STATE_SIZE; ++i) {
-            double d = state[i] - other[i];
-            d2 += d * d;
-        }
-        double d = std::sqrt(d2);
+        double d = permutation_rotation_state_distance(state, population[j].data());
         if (d < min_dist) min_dist = d;
     }
     return min_dist;

@@ -191,26 +191,29 @@ static void yoshida_step(
 // Check if body i is escaping from the other two.
 // Escape condition: specific orbital energy w.r.t. the other two > 0
 // AND radial velocity points away from their center of mass.
+// Masses are assumed equal (1.0) — the combined mass of the other two is 2.0.
 // ---------------------------------------------------------------------------
 static bool is_escaping(int i, const double x[3], const double y[3],
-                        const double vx[3], const double vy[3])
+                        const double vx[3], const double vy[3],
+                        const double m[3])
 {
     int j = (i + 1) % 3;
     int k = (i + 2) % 3;
 
-    double com_x = (x[j] + x[k]) * 0.5;
-    double com_y = (y[j] + y[k]) * 0.5;
+    double M_jk = m[j] + m[k];
+    double com_x = (m[j] * x[j] + m[k] * x[k]) / M_jk;
+    double com_y = (m[j] * y[j] + m[k] * y[k]) / M_jk;
 
     double rx = x[i] - com_x;
     double ry = y[i] - com_y;
-    double vx_rel = vx[i] - (vx[j] + vx[k]) * 0.5;
-    double vy_rel = vy[i] - (vy[j] + vy[k]) * 0.5;
+    double vx_rel = vx[i] - (m[j] * vx[j] + m[k] * vx[k]) / M_jk;
+    double vy_rel = vy[i] - (m[j] * vy[j] + m[k] * vy[k]) / M_jk;
 
     double r2 = rx * rx + ry * ry;
     double r  = std::sqrt(r2);
     double v2 = vx_rel * vx_rel + vy_rel * vy_rel;
 
-    double E_spec = 0.5 * v2 - 2.0 / r;
+    double E_spec = 0.5 * v2 - M_jk / r;
     double v_radial = (rx * vx_rel + ry * vy_rel) / r;
 
     return (E_spec > 0.0 && v_radial > 0.01);
@@ -238,11 +241,11 @@ static SimulationResult run_simulation(const double state[STATE_SIZE]) {
     result.reason = StopReason::MAX_STEPS;
     result.checkpoint_count = 0;
 
-    // Track closest return only after the initial transient (5% of max steps)
-    const int transient_steps = MAX_STEPS / 20;
+    // Track closest return only after the initial transient
+    const int transient_steps = MAX_STEPS / TRANSIENT_RATIO;
 
     int step;
-    for (step = 1; step <= MAX_STEPS; ++step) {
+    for (step = 0; step < MAX_STEPS; ++step) {
         yoshida_step(x, y, vx, vy, m);
 
         // --- closest return check (permutation + rotation aware) ---
@@ -254,7 +257,7 @@ static SimulationResult run_simulation(const double state[STATE_SIZE]) {
 
         // --- checkpoint recording for archive comparison ---
         for (int c = 0; c < NUM_ARCHIVE_CHECKPOINTS; ++c) {
-            if (step == ARCHIVE_CHECKPOINT_STEPS[c] && result.checkpoint_count <= c) {
+            if (step + 1 == ARCHIVE_CHECKPOINT_STEPS[c] && result.checkpoint_count <= c) {
                 // Record the current state at this checkpoint
                 for (int j = 0; j < 3; ++j) {
                     result.checkpoint_states[c][j] = x[j];
@@ -278,9 +281,9 @@ static SimulationResult run_simulation(const double state[STATE_SIZE]) {
         }
 
         // --- escape check (energy-based) ---
-        if (is_escaping(0, x, y, vx, vy) ||
-            is_escaping(1, x, y, vx, vy) ||
-            is_escaping(2, x, y, vx, vy)) {
+        if (is_escaping(0, x, y, vx, vy, m) ||
+            is_escaping(1, x, y, vx, vy, m) ||
+            is_escaping(2, x, y, vx, vy, m)) {
             result.reason = StopReason::ESCAPE;
             break;
         }

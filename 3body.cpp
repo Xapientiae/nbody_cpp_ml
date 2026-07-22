@@ -5,8 +5,8 @@
  * Integration: Yoshida 4th-order symplectic integrator
  *
  * Stopping conditions:
- *   1. Max 1000 steps reached
- *   2. Two bodies collide (distance < 0.01 AU)
+ *   1. Max 100000 steps reached
+ *   2. Two bodies collide (distance < 0.05 AU)
  *   3. A body escapes (distance > 100 AU from both other bodies)
  *
  * Compile: g++ -std=c++17 -O3 3body.cpp -o 3body
@@ -137,21 +137,21 @@ int main(int argc, char *argv[])
         t += DT;
 
         // Print at specified interval
-        if (output_counter++ == 0) {
+        if (output_counter == 0) {
             printf("%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n",
                    t, x[0], y[0], x[1], y[1], x[2], y[2]);
         }
-        if (output_counter >= output_interval) {
+        if (++output_counter >= output_interval) {
             output_counter = 0;
         }
 
         // --- Check collision and escape -----------------------------------
         // Compute all pairwise distances
-        double d01 = hypot(x[0] - x[1], y[0] - y[1]);
-        double d02 = hypot(x[0] - x[2], y[0] - y[2]);
-        double d12 = hypot(x[1] - x[2], y[1] - y[2]);
+        double d01 = std::hypot(x[0] - x[1], y[0] - y[1]);
+        double d02 = std::hypot(x[0] - x[2], y[0] - y[2]);
+        double d12 = std::hypot(x[1] - x[2], y[1] - y[2]);
 
-        // Collision check: any pair closer than 0.01 AU
+        // Collision check: any pair closer than COLLISION_DIST AU
         if (d01 < COLLISION_DIST) { reason = "COLLISION"; body_a = 0; body_b = 1; break; }
         if (d02 < COLLISION_DIST) { reason = "COLLISION"; body_a = 0; body_b = 2; break; }
         if (d12 < COLLISION_DIST) { reason = "COLLISION"; body_a = 1; body_b = 2; break; }

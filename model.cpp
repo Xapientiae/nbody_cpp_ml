@@ -350,6 +350,8 @@ int main(int argc, char *argv[]) {
         // Crossover + evaluation
         #pragma omp parallel for
         for (size_t i = (size_t)cfg.elite_count; i < cfg.pop_size; ++i) {
+            // tournament_select accepts scores as vector<double>&; pass the fitness scores directly
+            // We create a local view since tournament_select expects a vector reference
             std::vector<double> scores(cfg.pop_size);
             for (size_t j = 0; j < cfg.pop_size; ++j) scores[j] = fitness[j].score;
 
@@ -406,7 +408,6 @@ int main(int argc, char *argv[]) {
     save_state(best_file, best_state.data(), best_score, best_steps, best_return);
 
     // Add final best to archive ONLY if it has MAX_STEPS (full lifetime)
-    // Note: simulation reports MAX_STEPS+1 when it runs to completion
     // Use checkpoint-based comparison to catch time-aware similarity
     if (best_steps >= MAX_STEPS && is_novel_checkpoints(best_sim_result, archive, cfg.archive_dist_threshold)) {
         // Normalize before saving to ensure consistent reference frame and size
