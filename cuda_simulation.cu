@@ -3,7 +3,6 @@
 #include <cmath>
 #include <cstring>
 #include "cuda_simulation.cuh"
-#include "constants.hpp"
 
 // CUDA device functions
 

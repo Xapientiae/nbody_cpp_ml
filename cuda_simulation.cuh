@@ -2,7 +2,6 @@
 #define CUDA_SIMULATION_CUH
 
 #include <cuda_runtime.h>
-#include "constants.hpp"
 
 // CUDA simulation structures and kernels
 

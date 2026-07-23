@@ -176,12 +176,6 @@ static void append_history(const std::string& filename, int gen,
     fclose(fp);
 }
 
-// Compute archive penalty
-static double compute_archive_penalty(double distance, double threshold) {
-    if (distance >= threshold) return 0.0;
-    return ARCHIVE_PENALTY_MAX * (1.0 - distance / threshold);
-}
-
 // Main
 int main(int argc, char *argv[]) {
     Config cfg = parse_args(argc, argv);

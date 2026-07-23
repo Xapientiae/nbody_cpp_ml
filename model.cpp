@@ -171,37 +171,6 @@ static void append_history(const std::string& filename, int gen,
     fclose(fp);
 }
 
-// Compute archive penalty (linear decay)
-static double compute_archive_penalty(double distance, double threshold) {
-    if (distance >= threshold) return 0.0;
-    return ARCHIVE_PENALTY_MAX * (1.0 - distance / threshold);
-}
-
-// Compute archive distance using checkpoint states
-static double archive_distance_checkpoints(
-    const SimulationResult& sim_result,
-    const std::vector<std::vector<double>>& archive)
-{
-    if (archive.empty()) return INFINITY;
-    
-    double min_dist = INFINITY;
-    for (int c = 0; c < sim_result.checkpoint_count; ++c) {
-        double d = archive_distance(sim_result.checkpoint_states[c], archive);
-        if (d < min_dist) min_dist = d;
-    }
-    return min_dist;
-}
-
-// Check if state is novel enough to add to archive
-static bool is_novel_checkpoints(
-    const SimulationResult& sim_result,
-    const std::vector<std::vector<double>>& archive,
-    double threshold)
-{
-    double d = archive_distance_checkpoints(sim_result, archive);
-    return d >= threshold;
-}
-
 // Main
 int main(int argc, char *argv[]) {
     Config cfg = parse_args(argc, argv);

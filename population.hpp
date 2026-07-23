@@ -79,17 +79,6 @@ struct SimulationResult {
     int    checkpoint_count;      // number of checkpoints actually recorded
 };
 
-// Apply 2D rotation to points
-static void rotate_points(double x[3], double y[3], double theta) {
-    double c = std::cos(theta);
-    double s = std::sin(theta);
-    for (int i = 0; i < 3; ++i) {
-        double xi = x[i], yi = y[i];
-        x[i] = xi * c - yi * s;
-        y[i] = xi * s + yi * c;
-    }
-}
-
 // Apply 2D rotation to state
 static void rotate_state(double state[STATE_SIZE], double theta) {
     double c = std::cos(theta);
@@ -664,6 +653,42 @@ static double permutation_rotation_state_distance(
     if (best_rev < best) best = best_rev;
     
     return std::sqrt(best);
+}
+
+// Forward declaration
+static double archive_distance(
+    const double state[STATE_SIZE],
+    const std::vector<std::vector<double>>& archive);
+
+// Compute archive penalty (linear decay)
+static double compute_archive_penalty(double distance, double threshold) {
+    if (distance >= threshold) return 0.0;
+    return ARCHIVE_PENALTY_MAX * (1.0 - distance / threshold);
+}
+
+// Compute archive distance using checkpoint states
+static double archive_distance_checkpoints(
+    const SimulationResult& sim_result,
+    const std::vector<std::vector<double>>& archive)
+{
+    if (archive.empty()) return INFINITY;
+    
+    double min_dist = INFINITY;
+    for (int c = 0; c < sim_result.checkpoint_count; ++c) {
+        double d = archive_distance(sim_result.checkpoint_states[c], archive);
+        if (d < min_dist) min_dist = d;
+    }
+    return min_dist;
+}
+
+// Check if state is novel enough to add to archive
+static bool is_novel_checkpoints(
+    const SimulationResult& sim_result,
+    const std::vector<std::vector<double>>& archive,
+    double threshold)
+{
+    double d = archive_distance_checkpoints(sim_result, archive);
+    return d >= threshold;
 }
 
 // Archive distance
