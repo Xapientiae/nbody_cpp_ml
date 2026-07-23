@@ -29,9 +29,7 @@
 #include "population.hpp"
 #include "cuda_simulation.cuh"
 
-// ---------------------------------------------------------------------------
 // Command-line configuration
-// ---------------------------------------------------------------------------
 struct Config {
     size_t pop_size           = 256;
     int    generations        = 50;
@@ -131,16 +129,12 @@ static Config parse_args(int argc, char *argv[]) {
     return cfg;
 }
 
-// ---------------------------------------------------------------------------
 // Ensure directory exists
-// ---------------------------------------------------------------------------
 static void ensure_dir(const std::string& dir) {
     std::filesystem::create_directories(dir);
 }
 
-// ---------------------------------------------------------------------------
 // Save state to file
-// ---------------------------------------------------------------------------
 static void save_state(const std::string& filename, const double state[STATE_SIZE],
                        double score, int steps, double closest_return)
 {
@@ -166,9 +160,7 @@ static void save_state(const std::string& filename, const double state[STATE_SIZ
     fclose(fp);
 }
 
-// ---------------------------------------------------------------------------
 // Append history CSV
-// ---------------------------------------------------------------------------
 static void append_history(const std::string& filename, int gen,
                            double best_score, double avg_score,
                            int best_steps, double best_return)
@@ -184,23 +176,18 @@ static void append_history(const std::string& filename, int gen,
     fclose(fp);
 }
 
-// ---------------------------------------------------------------------------
 // Compute archive penalty
-// ---------------------------------------------------------------------------
 static double compute_archive_penalty(double distance, double threshold) {
     if (distance >= threshold) return 0.0;
     return ARCHIVE_PENALTY_MAX * (1.0 - distance / threshold);
 }
 
-// ---------------------------------------------------------------------------
 // Main
-// ---------------------------------------------------------------------------
 int main(int argc, char *argv[]) {
     Config cfg = parse_args(argc, argv);
 
     ensure_dir(cfg.output_dir);
 
-    // Seed RNG
     if (cfg.seed == 0) {
         cfg.seed = (int)std::time(nullptr) ^
                    (int)std::chrono::steady_clock::now().time_since_epoch().count();
@@ -215,7 +202,7 @@ int main(int argc, char *argv[]) {
         }
     #endif
 
-    // Initialize CUDA if requested
+    // Initialize CUDA
     bool cuda_available = false;
     if (cfg.use_cuda) {
         cuda_available = (cuda_init() != 0);
@@ -228,11 +215,9 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "# Using CUDA acceleration\n");
     }
 
-    // Load archive
     std::vector<std::vector<double>> archive;
     size_t archive_count = load_states_from_archive(cfg.archive_file.c_str(), archive);
 
-    // Determine base state (if refining)
     std::vector<double> refine_base(STATE_SIZE);
     bool is_refine = !cfg.refine_file.empty();
 
@@ -249,7 +234,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Echo config
     if (cfg.verbose) {
         fprintf(stderr, "# Model: GPU-accelerated evolutionary 3-body orbit finder\n");
         fprintf(stderr, "# Population: %zu  Generations: %d  Seed: %d\n",
@@ -266,12 +250,10 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "#\n");
     }
 
-    // Allocate population
     std::vector<std::vector<double>> population(cfg.pop_size,
                                                  std::vector<double>(STATE_SIZE));
     std::vector<FitnessResult> fitness(cfg.pop_size);
 
-    // Generate initial population
     if (cfg.verbose) fprintf(stderr, "# Gen 0: generating population...\n");
 
     if (is_refine) {
@@ -283,13 +265,11 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Evaluate generation 0
     if (cfg.verbose) fprintf(stderr, "# Gen 0: evaluating...\n");
 
     const int progress_interval = std::max(1, (int)(cfg.pop_size / 20));
 
     if (cuda_available) {
-        // CUDA path: copy population to GPU, evaluate all at once
         size_t pop_bytes = cfg.pop_size * STATE_SIZE * sizeof(double);
         size_t results_bytes = cfg.pop_size * sizeof(CudaFitnessResult);
 
@@ -299,20 +279,16 @@ int main(int argc, char *argv[]) {
         cudaMalloc(&d_population, pop_bytes);
         cudaMalloc(&d_results, results_bytes);
 
-        // Copy population to GPU
         cudaMemcpy(d_population, population[0].data(), pop_bytes, cudaMemcpyHostToDevice);
 
-        // Evaluate on GPU
         cudaError_t err = cuda_evaluate_fitness(d_population, d_results, cfg.pop_size);
         if (err != cudaSuccess) {
             fprintf(stderr, "ERROR: CUDA evaluation failed: %s\n", cudaGetErrorString(err));
             cuda_available = false;
         } else {
-            // Copy results back
             std::vector<CudaFitnessResult> cuda_results(cfg.pop_size);
             cudaMemcpy(cuda_results.data(), d_results, results_bytes, cudaMemcpyDeviceToHost);
 
-            // Convert to FitnessResult
             for (size_t i = 0; i < cfg.pop_size; ++i) {
                 fitness[i].score = cuda_results[i].score;
                 fitness[i].steps = cuda_results[i].steps;
@@ -330,7 +306,6 @@ int main(int argc, char *argv[]) {
     }
 
     if (!cuda_available) {
-        // CPU fallback
         #pragma omp parallel for
         for (size_t i = 0; i < cfg.pop_size; ++i) {
             fitness[i] = evaluate_fitness(population[i].data());
@@ -343,7 +318,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Track best
     double best_score = -1.0;
     std::vector<double> best_state(STATE_SIZE);
     int best_steps = 0;
@@ -362,7 +336,6 @@ int main(int argc, char *argv[]) {
 
     for (size_t i = 0; i < cfg.pop_size; ++i) update_best(i);
 
-    // History for gen 0
     double avg = 0.0;
     for (size_t i = 0; i < cfg.pop_size; ++i) avg += fitness[i].score;
     avg /= cfg.pop_size;
@@ -375,16 +348,13 @@ int main(int argc, char *argv[]) {
                 best_score, avg, best_steps, best_return);
     }
 
-    // Evolutionary loop
     for (int gen = 1; gen <= cfg.generations; ++gen) {
         auto t_start = std::chrono::steady_clock::now();
 
-        // Create next generation
         std::vector<std::vector<double>> next_pop(cfg.pop_size,
                                                    std::vector<double>(STATE_SIZE));
         std::vector<FitnessResult> next_fitness(cfg.pop_size);
 
-        // Elitism
         std::vector<size_t> indices(cfg.pop_size);
         for (size_t i = 0; i < cfg.pop_size; ++i) indices[i] = i;
         std::partial_sort(indices.begin(), indices.begin() + cfg.elite_count, indices.end(),
@@ -396,7 +366,6 @@ int main(int argc, char *argv[]) {
             next_fitness[e] = fitness[src];
         }
 
-        // Crossover + evaluation
         #pragma omp parallel for
         for (size_t i = (size_t)cfg.elite_count; i < cfg.pop_size; ++i) {
             std::vector<double> scores(cfg.pop_size);
@@ -416,7 +385,6 @@ int main(int argc, char *argv[]) {
             next_fitness[i].score *= (1.0 - penalty);
         }
 
-        // Diversity penalty
         for (size_t i = 0; i < cfg.pop_size; ++i) {
             double d = crowding_distance(next_pop[i].data(), next_pop, i);
             if (d < cfg.diversity_threshold) {
@@ -424,14 +392,11 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // Swap
         population.swap(next_pop);
         fitness.swap(next_fitness);
 
-        // Update best
         for (size_t i = 0; i < cfg.pop_size; ++i) update_best(i);
 
-        // Stats
         avg = 0.0;
         for (size_t i = 0; i < cfg.pop_size; ++i) avg += fitness[i].score;
         avg /= cfg.pop_size;
@@ -447,7 +412,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Final save
     std::string best_file = cfg.output_dir + "/best.txt";
     save_state(best_file, best_state.data(), best_score, best_steps, best_return);
 
@@ -473,7 +437,6 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "#   ./3body %s | python3 visualize.py\n", best_file.c_str());
     }
 
-    // Cleanup CUDA
     if (cuda_available) {
         cuda_cleanup();
     }

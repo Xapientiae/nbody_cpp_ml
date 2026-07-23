@@ -28,9 +28,7 @@
 
 #include "population.hpp"
 
-// ---------------------------------------------------------------------------
 // Command-line configuration
-// ---------------------------------------------------------------------------
 struct Config {
     size_t pop_size           = 256;
     int    generations        = 50;
@@ -126,16 +124,12 @@ static Config parse_args(int argc, char *argv[]) {
     return cfg;
 }
 
-// ---------------------------------------------------------------------------
 // Ensure directory exists
-// ---------------------------------------------------------------------------
 static void ensure_dir(const std::string& dir) {
     std::filesystem::create_directories(dir);
 }
 
-// ---------------------------------------------------------------------------
-// Save best state to file (3body.cpp compatible)
-// ---------------------------------------------------------------------------
+// Save best state to file
 static void save_state(const std::string& filename, const double state[STATE_SIZE],
                        double score, int steps, double closest_return)
 {
@@ -161,9 +155,7 @@ static void save_state(const std::string& filename, const double state[STATE_SIZ
     fclose(fp);
 }
 
-// ---------------------------------------------------------------------------
 // Append history CSV
-// ---------------------------------------------------------------------------
 static void append_history(const std::string& filename, int gen,
                            double best_score, double avg_score,
                            int best_steps, double best_return)
@@ -179,23 +171,13 @@ static void append_history(const std::string& filename, int gen,
     fclose(fp);
 }
 
-// ---------------------------------------------------------------------------
-// Compute archive penalty using linear decay.
-// Penalty = max_penalty * (1 - distance / threshold)
-// At distance 0: penalty = max_penalty
-// At distance = threshold: penalty = 0
-// At distance > threshold: penalty = 0
-// ---------------------------------------------------------------------------
+// Compute archive penalty (linear decay)
 static double compute_archive_penalty(double distance, double threshold) {
     if (distance >= threshold) return 0.0;
     return ARCHIVE_PENALTY_MAX * (1.0 - distance / threshold);
 }
 
-// ---------------------------------------------------------------------------
-// Compute archive distance using checkpoint states (time-aware similarity).
-// Checks at multiple time points and returns the minimum distance.
-// This catches systems that might look similar at different times.
-// ---------------------------------------------------------------------------
+// Compute archive distance using checkpoint states
 static double archive_distance_checkpoints(
     const SimulationResult& sim_result,
     const std::vector<std::vector<double>>& archive)
@@ -210,9 +192,7 @@ static double archive_distance_checkpoints(
     return min_dist;
 }
 
-// ---------------------------------------------------------------------------
-// Check if state is novel enough to add to archive (using checkpoint states)
-// ---------------------------------------------------------------------------
+// Check if state is novel enough to add to archive
 static bool is_novel_checkpoints(
     const SimulationResult& sim_result,
     const std::vector<std::vector<double>>& archive,
@@ -222,38 +202,34 @@ static bool is_novel_checkpoints(
     return d >= threshold;
 }
 
-// ---------------------------------------------------------------------------
 // Main
-// ---------------------------------------------------------------------------
 int main(int argc, char *argv[]) {
     Config cfg = parse_args(argc, argv);
 
     // Ensure output directory
     ensure_dir(cfg.output_dir);
 
-    // --- Seed ---
+    // Seed RNG
     if (cfg.seed == 0) {
         cfg.seed = (int)std::time(nullptr) ^
                    (int)std::chrono::steady_clock::now().time_since_epoch().count();
     }
     
-    // Seed the thread-local RNGs in population.hpp
-    // Each thread will get a different seed derived from the main seed
+    // Seed thread-local RNGs
     #ifdef _OPENMP
         #pragma omp parallel
         {
             int thread_num = omp_get_thread_num();
-            // Derive a unique seed for each thread
             unsigned int thread_seed = cfg.seed + thread_num * 1000;
             rng_local.seed(thread_seed);
         }
     #endif
 
-    // --- Load archive ---
+    // Load archive
     std::vector<std::vector<double>> archive;
     size_t archive_count = load_states_from_archive(cfg.archive_file.c_str(), archive);
 
-    // --- Determine base state (if refining) ---
+    // Determine base state (if refining)
     std::vector<double> refine_base(STATE_SIZE);
     bool is_refine = !cfg.refine_file.empty();
 
@@ -263,9 +239,9 @@ int main(int argc, char *argv[]) {
                     cfg.refine_file.c_str());
             return 1;
         }
-        // Normalize the loaded state to ensure consistent reference frame
+        // Normalize state
         normalize_state(refine_base.data());
-        // If mutation_sigma wasn't explicitly set (still default 0.05), use a smaller one
+        // Use smaller mutation sigma for refinement
         cfg.mutation_sigma = std::min(cfg.mutation_sigma, 0.02);
 
         if (cfg.verbose) {
@@ -273,7 +249,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // --- Echo config ---
+    // Echo config
     if (cfg.verbose) {
         fprintf(stderr, "# Model: Evolutionary 3-body orbit finder\n");
         fprintf(stderr, "# Population: %zu  Generations: %d  Seed: %d\n",
@@ -289,12 +265,12 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "#\n");
     }
 
-    // --- Allocate population ---
+    // Allocate population
     std::vector<std::vector<double>> population(cfg.pop_size,
                                                  std::vector<double>(STATE_SIZE));
     std::vector<FitnessResult> fitness(cfg.pop_size);
 
-    // --- Generate initial population ---
+    // Generate initial population
     if (cfg.verbose) fprintf(stderr, "# Gen 0: generating population...\n");
 
     if (is_refine) {
@@ -306,7 +282,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // --- Evaluate generation 0 ---
+    // Evaluate generation 0
     if (cfg.verbose) fprintf(stderr, "# Gen 0: evaluating...\n");
 
     const int progress_interval = std::max(1, (int)(cfg.pop_size / 20)); // Report every 5%
@@ -315,7 +291,7 @@ int main(int argc, char *argv[]) {
     for (size_t i = 0; i < cfg.pop_size; ++i) {
         fitness[i] = evaluate_fitness(population[i].data());
 
-        // Progress indicator (thread-safe)
+        // Progress indicator
         #pragma omp critical
         if (cfg.verbose && (i + 1) % progress_interval == 0) {
             fprintf(stderr, "#   Progress: %zu/%zu (%.0f%%)\n",
@@ -323,7 +299,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // --- Track best ---
+    // Track best
     double best_score = -1.0;
     std::vector<double> best_state(STATE_SIZE);
     int best_steps = 0;
@@ -342,7 +318,7 @@ int main(int argc, char *argv[]) {
 
     for (size_t i = 0; i < cfg.pop_size; ++i) update_best(i);
 
-    // --- History for gen 0 ---
+    // History for gen 0
     double avg = 0.0;
     for (size_t i = 0; i < cfg.pop_size; ++i) avg += fitness[i].score;
     avg /= cfg.pop_size;
@@ -355,16 +331,14 @@ int main(int argc, char *argv[]) {
                 best_score, avg, best_steps, best_return);
     }
 
-    // --- Evolutionary loop ---
+    // Evolutionary loop
     for (int gen = 1; gen <= cfg.generations; ++gen) {
         auto t_start = std::chrono::steady_clock::now();
 
-        // Create next generation
         std::vector<std::vector<double>> next_pop(cfg.pop_size,
                                                    std::vector<double>(STATE_SIZE));
         std::vector<FitnessResult> next_fitness(cfg.pop_size);
 
-        // Elitism
         std::vector<size_t> indices(cfg.pop_size);
         for (size_t i = 0; i < cfg.pop_size; ++i) indices[i] = i;
         std::partial_sort(indices.begin(), indices.begin() + cfg.elite_count, indices.end(),
@@ -376,11 +350,8 @@ int main(int argc, char *argv[]) {
             next_fitness[e] = fitness[src];
         }
 
-        // Crossover + evaluation
         #pragma omp parallel for
         for (size_t i = (size_t)cfg.elite_count; i < cfg.pop_size; ++i) {
-            // tournament_select accepts scores as vector<double>&; pass the fitness scores directly
-            // We create a local view since tournament_select expects a vector reference
             std::vector<double> scores(cfg.pop_size);
             for (size_t j = 0; j < cfg.pop_size; ++j) scores[j] = fitness[j].score;
 
@@ -393,14 +364,13 @@ int main(int argc, char *argv[]) {
             // Evaluate
             next_fitness[i] = evaluate_fitness(next_pop[i].data());
 
-            // Archive penalty: exponential decay based on distance at checkpoints
-            // This catches systems that might look similar at different times
+            // Archive penalty
             double d_arch = archive_distance_checkpoints(next_fitness[i].sim_result, archive);
             double penalty = compute_archive_penalty(d_arch, cfg.archive_dist_threshold);
             next_fitness[i].score *= (1.0 - penalty);
         }
 
-        // Diversity penalty within population
+        // Diversity penalty
         for (size_t i = 0; i < cfg.pop_size; ++i) {
             double d = crowding_distance(next_pop[i].data(), next_pop, i);
             if (d < cfg.diversity_threshold) {
@@ -408,14 +378,11 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // Swap
         population.swap(next_pop);
         fitness.swap(next_fitness);
 
-        // Update best
         for (size_t i = 0; i < cfg.pop_size; ++i) update_best(i);
 
-        // Stats
         avg = 0.0;
         for (size_t i = 0; i < cfg.pop_size; ++i) avg += fitness[i].score;
         avg /= cfg.pop_size;
@@ -432,14 +399,13 @@ int main(int argc, char *argv[]) {
 
     }
 
-    // --- Final save (append mode) ---
+    // Final save
     std::string best_file = cfg.output_dir + "/best.txt";
     save_state(best_file, best_state.data(), best_score, best_steps, best_return);
 
-    // Add final best to archive ONLY if it has MAX_STEPS (full lifetime)
-    // Use checkpoint-based comparison to catch time-aware similarity
+    // Add final best to archive if it has MAX_STEPS
     if (best_steps >= MAX_STEPS && is_novel_checkpoints(best_sim_result, archive, cfg.archive_dist_threshold)) {
-        // Normalize before saving to ensure consistent reference frame and size
+        // Normalize before saving
         std::vector<double> best_state_normalized = best_state;
         normalize_state(best_state_normalized.data());
         normalize_scale(best_state_normalized.data());

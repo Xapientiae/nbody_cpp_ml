@@ -4,11 +4,9 @@
 #include <cuda_runtime.h>
 #include "constants.hpp"
 
-// ---------------------------------------------------------------------------
-// CUDA-accelerated simulation structures and kernels
-// ---------------------------------------------------------------------------
+// CUDA simulation structures and kernels
 
-// Simulation result structure (GPU version)
+// Simulation result
 struct CudaSimulationResult {
     int steps;
     double closest_return;
@@ -19,7 +17,7 @@ struct CudaSimulationResult {
     int checkpoint_count;
 };
 
-// Fitness result structure (GPU version)
+// Fitness result
 struct CudaFitnessResult {
     double score;
     int steps;
@@ -27,28 +25,19 @@ struct CudaFitnessResult {
     CudaSimulationResult sim_result;
 };
 
-// ---------------------------------------------------------------------------
-// CUDA kernel: Run multiple simulations in parallel
-// Each thread handles one individual
-// ---------------------------------------------------------------------------
+// CUDA kernel: Evaluate fitness
 __global__ void gpu_evaluate_fitness_kernel(
     const double* __restrict__ population,      // [pop_size * STATE_SIZE]
     CudaFitnessResult* __restrict__ results,    // [pop_size]
     int pop_size);
 
-// ---------------------------------------------------------------------------
-// CUDA kernel: Compute pairwise distance matrix for diversity checks
-// Each thread computes one pair (i, j) where i < j
-// ---------------------------------------------------------------------------
+// CUDA kernel: Compute pairwise distance matrix
 __global__ void gpu_compute_distance_matrix_kernel(
     const double* __restrict__ population,      // [pop_size * STATE_SIZE]
     double* __restrict__ distance_matrix,       // [pop_size * pop_size]
     int pop_size);
 
-// ---------------------------------------------------------------------------
-// CUDA kernel: Compute distances from population to archive entries
-// Each thread computes distance from one individual to one archive entry
-// ---------------------------------------------------------------------------
+// CUDA kernel: Compute distances to archive
 __global__ void gpu_archive_distance_kernel(
     const double* __restrict__ population,      // [pop_size * STATE_SIZE]
     const double* __restrict__ archive,         // [archive_size * STATE_SIZE]
@@ -56,25 +45,19 @@ __global__ void gpu_archive_distance_kernel(
     int pop_size,
     int archive_size);
 
-// ---------------------------------------------------------------------------
-// Host wrapper: Launch GPU fitness evaluation
-// ---------------------------------------------------------------------------
+// Host wrapper: GPU fitness evaluation
 cudaError_t cuda_evaluate_fitness(
     const double* population,
     CudaFitnessResult* results,
     int pop_size);
 
-// ---------------------------------------------------------------------------
-// Host wrapper: Launch GPU distance matrix computation
-// ---------------------------------------------------------------------------
+// Host wrapper: GPU distance matrix
 cudaError_t cuda_compute_distance_matrix(
     const double* population,
     double* distance_matrix,
     int pop_size);
 
-// ---------------------------------------------------------------------------
-// Host wrapper: Launch GPU archive distance computation
-// ---------------------------------------------------------------------------
+// Host wrapper: GPU archive distances
 cudaError_t cuda_compute_archive_distances(
     const double* population,
     const double* archive,
@@ -82,14 +65,10 @@ cudaError_t cuda_compute_archive_distances(
     int pop_size,
     int archive_size);
 
-// ---------------------------------------------------------------------------
-// Initialize CUDA (check device, allocate memory)
-// ---------------------------------------------------------------------------
+// Initialize CUDA
 int cuda_init();
 
-// ---------------------------------------------------------------------------
-// Cleanup CUDA resources
-// ---------------------------------------------------------------------------
+// Cleanup CUDA
 void cuda_cleanup();
 
 #endif // CUDA_SIMULATION_CUH

@@ -5,9 +5,7 @@
 #include "cuda_simulation.cuh"
 #include "constants.hpp"
 
-// ---------------------------------------------------------------------------
-// CUDA device functions (shared by all kernels)
-// ---------------------------------------------------------------------------
+// CUDA device functions
 
 __device__ double gpu_sqrt(double x) {
     return __fsqrt_rn(x);
@@ -55,7 +53,6 @@ __device__ void gpu_yoshida_step(
 
     double ax[3], ay[3];
 
-    // Stage 1: w1
     for (int i = 0; i < 3; ++i) {
         x[i] += hw1 * vx[i];
         y[i] += hw1 * vy[i];
@@ -70,7 +67,6 @@ __device__ void gpu_yoshida_step(
         y[i] += hw1 * vy[i];
     }
 
-    // Stage 2: w0
     for (int i = 0; i < 3; ++i) {
         x[i] += hw0 * vx[i];
         y[i] += hw0 * vy[i];
@@ -85,7 +81,6 @@ __device__ void gpu_yoshida_step(
         y[i] += hw0 * vy[i];
     }
 
-    // Stage 3: w1
     for (int i = 0; i < 3; ++i) {
         x[i] += hw1 * vx[i];
         y[i] += hw1 * vy[i];
@@ -238,7 +233,6 @@ __device__ double gpu_permutation_rotation_state_distance(
     };
     double best = INFINITY;
 
-    // Normal orientation
     for (int p = 0; p < 6; ++p) {
         double theta = gpu_optimal_rotation_angle(x1, y1, x2, y2, perms[p]);
         double c = cos(theta);
@@ -259,7 +253,6 @@ __device__ double gpu_permutation_rotation_state_distance(
         if (d2 < best) best = d2;
     }
 
-    // Time-reversed orientation
     double vx1_rev[3], vy1_rev[3];
     for (int i = 0; i < 3; ++i) {
         vx1_rev[i] = -vx1[i];
@@ -288,9 +281,7 @@ __device__ double gpu_permutation_rotation_state_distance(
     return sqrt(best);
 }
 
-// ---------------------------------------------------------------------------
-// CUDA Kernel: Evaluate fitness for one individual
-// ---------------------------------------------------------------------------
+// CUDA Kernel: Evaluate fitness
 __global__ void gpu_evaluate_fitness_kernel(
     const double* __restrict__ population,
     CudaFitnessResult* __restrict__ results,
@@ -299,7 +290,6 @@ __global__ void gpu_evaluate_fitness_kernel(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= pop_size) return;
 
-    // Load initial state
     const double* state = &population[idx * STATE_SIZE];
     double x[3], y[3], vx[3], vy[3];
     double x0[3], y0[3];
@@ -324,15 +314,13 @@ __global__ void gpu_evaluate_fitness_kernel(
     for (step = 0; step < MAX_STEPS; ++step) {
         gpu_yoshida_step(x, y, vx, vy, m);
 
-        // Closest return check
-        if (step > transient_steps) {
+            if (step > transient_steps) {
             double d = gpu_permutation_rotation_distance(x, y, x0, y0);
             if (d < sim_result.closest_return)
                 sim_result.closest_return = d;
         }
 
-        // Checkpoint recording
-        for (int c = 0; c < NUM_ARCHIVE_CHECKPOINTS; ++c) {
+            for (int c = 0; c < NUM_ARCHIVE_CHECKPOINTS; ++c) {
             if (step + 1 == ARCHIVE_CHECKPOINT_STEPS[c] && sim_result.checkpoint_count <= c) {
                 for (int j = 0; j < 3; ++j) {
                     sim_result.checkpoint_states[c][j] = x[j];
@@ -345,7 +333,7 @@ __global__ void gpu_evaluate_fitness_kernel(
             }
         }
 
-        // Collision check (squared distance)
+        // Collision check
         double dx01 = x[0] - x[1]; double dy01 = y[0] - y[1];
         double dx02 = x[0] - x[2]; double dy02 = y[0] - y[2];
         double dx12 = x[1] - x[2]; double dy12 = y[1] - y[2];
@@ -357,8 +345,7 @@ __global__ void gpu_evaluate_fitness_kernel(
             break;
         }
 
-        // Escape check
-        if (gpu_is_escaping(0, x, y, vx, vy, m) ||
+            if (gpu_is_escaping(0, x, y, vx, vy, m) ||
             gpu_is_escaping(1, x, y, vx, vy, m) ||
             gpu_is_escaping(2, x, y, vx, vy, m)) {
             sim_result.reason = 2;  // ESCAPE
@@ -374,7 +361,6 @@ __global__ void gpu_evaluate_fitness_kernel(
         sim_result.vel_end[i + 3] = vy[i];
     }
 
-    // Compute fitness score
     double base = (double)sim_result.steps;
     double bonus = (sim_result.closest_return == INFINITY) ? 0.0 : exp(-sim_result.closest_return / RETURN_BONUS_SIGMA);
     results[idx].score = base * (1.0 + bonus);
@@ -383,9 +369,7 @@ __global__ void gpu_evaluate_fitness_kernel(
     memcpy(&results[idx].sim_result, &sim_result, sizeof(CudaSimulationResult));
 }
 
-// ---------------------------------------------------------------------------
 // CUDA Kernel: Compute pairwise distance matrix
-// ---------------------------------------------------------------------------
 __global__ void gpu_compute_distance_matrix_kernel(
     const double* __restrict__ population,
     double* __restrict__ distance_matrix,
@@ -404,9 +388,7 @@ __global__ void gpu_compute_distance_matrix_kernel(
     distance_matrix[j * pop_size + i] = d;
 }
 
-// ---------------------------------------------------------------------------
-// CUDA Kernel: Compute distances from population to archive
-// ---------------------------------------------------------------------------
+// CUDA Kernel: Compute distances to archive
 __global__ void gpu_archive_distance_kernel(
     const double* __restrict__ population,
     const double* __restrict__ archive,
@@ -424,14 +406,11 @@ __global__ void gpu_archive_distance_kernel(
 
     double d = gpu_permutation_rotation_state_distance(state, arch_entry);
 
-    // Atomic min reduction
     double old = atomicMin(&min_distances[ind], d);
     if (d < old) min_distances[ind] = d;
 }
 
-// ---------------------------------------------------------------------------
 // Host wrapper functions
-// ---------------------------------------------------------------------------
 
 static int cuda_device_count = 0;
 static bool cuda_initialized = false;
@@ -466,11 +445,9 @@ cudaError_t cuda_evaluate_fitness(
 {
     if (!cuda_initialized) return cudaErrorNotInitialized;
 
-    // Launch configuration
     int threads_per_block = 256;
     int blocks = (pop_size + threads_per_block - 1) / threads_per_block;
 
-    // Launch kernel
     gpu_evaluate_fitness_kernel<<<blocks, threads_per_block>>>(
         population, results, pop_size);
 
@@ -521,7 +498,6 @@ cudaError_t cuda_compute_archive_distances(
 {
     if (!cuda_initialized) return cudaErrorNotInitialized;
 
-    // Initialize min_distances to INFINITY
     cudaMemset(min_distances, 0xFF, pop_size * sizeof(double));  // NaN pattern for INFINITY
 
     dim3 threads_per_block(16, 16);

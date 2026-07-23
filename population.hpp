@@ -10,15 +10,11 @@
 #include <limits>
 #include <cstring>
 
-// ---------------------------------------------------------------------------
 // Physical Constants
-// ---------------------------------------------------------------------------
 constexpr double G = 1.0;              // gravitational constant
 constexpr double DT = 0.01;            // timestep
 
-// ---------------------------------------------------------------------------
 // Simulation Parameters
-// ---------------------------------------------------------------------------
 constexpr int    N = 3;                 // number of bodies
 constexpr int    STATE_SIZE = 12;       // x1..3, y1..3, vx1..3, vy1..3
 constexpr int    MAX_STEPS = 100000;    // maximum simulation steps
@@ -26,16 +22,11 @@ constexpr double COLLISION_DIST = 0.05; // collision threshold (AU)
 constexpr double ESCAPE_DIST = 100.0;   // escape threshold (AU)
 constexpr double EJECTION_DIST = 15.0;  // ejection threshold (AU) - penalty if exceeded
 
-// ---------------------------------------------------------------------------
 // Yoshida 4th-order Coefficients
-// c1 = 1/(2 - 2^(1/3)), c0 = 1 - 2*c1
-// ---------------------------------------------------------------------------
 constexpr double YOSHIDA_C1 = 1.351207191959657;
 constexpr double YOSHIDA_C0 = -1.702414383919314;
 
-// ---------------------------------------------------------------------------
 // Population / Evolutionary Algorithm Parameters
-// ---------------------------------------------------------------------------
 constexpr double POSITION_BOX_MIN = -3.0;  // min position for random initialization
 constexpr double POSITION_BOX_MAX = 3.0;   // max position for random initialization
 constexpr double POSITION_MAX_DIST = 4.0;  // max distance from origin
@@ -47,39 +38,28 @@ constexpr double MUTATION_ALPHA_MAX = 1.2;  // extrapolation factor upper bound
 constexpr double RETURN_BONUS_SIGMA = 0.5;  // sigma for return distance bonus
 constexpr double TRANSIENT_RATIO = 20;      // transient period = MAX_STEPS / this
 
-// ---------------------------------------------------------------------------
-// Generator Parameters (for generator.hpp integration)
-// ---------------------------------------------------------------------------
+// Generator Parameters
 constexpr double GENERATOR_POS_RANGE = 2.0;     // position range [-range, +range]
 constexpr double GENERATOR_VEL_RANGE = 2.0;     // velocity range [-range, +range]
 constexpr double GENERATOR_MIN_DIST = 0.2;      // minimum distance between bodies
 constexpr double GENERATOR_TARGET_R2 = 12.0;    // target sum of squared radii
 
-// ---------------------------------------------------------------------------
-// Archive Checkpoint Times (for time-aware similarity detection)
-// These are step numbers at which to check archive distance
-// ---------------------------------------------------------------------------
+// Archive Checkpoint Times
 constexpr int ARCHIVE_CHECKPOINT_STEPS[] = {3000, 7000, 13000, 17000, 29000, 51000, 67000, 100000};
 constexpr int NUM_ARCHIVE_CHECKPOINTS = 8;
 
-// ---------------------------------------------------------------------------
 // Archive / Diversity Parameters
-// ---------------------------------------------------------------------------
 constexpr double DEFAULT_ARCHIVE_DIST_THRESHOLD = 0.3; // min dist from archive entries (stricter)
 constexpr double DEFAULT_ARCHIVE_PENALTY = 0.7;         // penalty fraction if too close
 constexpr double DEFAULT_DIVERSITY_THRESHOLD = 0.7;     // min crowding distance
 constexpr double DEFAULT_DIVERSITY_PENALTY = 0.5;       // penalty fraction
 constexpr double EJECTION_PENALTY = 0.4;                 // 40% score reduction per ejection
 
-// ---------------------------------------------------------------------------
-// Archive Penalty Function Parameters (for linear/exponential penalty)
-// ---------------------------------------------------------------------------
+// Archive Penalty Parameters
 constexpr double ARCHIVE_PENALTY_MAX = 0.95;  // maximum penalty at distance 0 (increased)
 constexpr double ARCHIVE_PENALTY_EXPONENT = 3.0;  // exponential decay exponent (faster drop-off)
 
-// ---------------------------------------------------------------------------
 // Stop reasons
-// ---------------------------------------------------------------------------
 enum class StopReason : int {
     NONE,
     COLLISION,
@@ -87,9 +67,7 @@ enum class StopReason : int {
     MAX_STEPS
 };
 
-// ---------------------------------------------------------------------------
 // Simulation result
-// ---------------------------------------------------------------------------
 struct SimulationResult {
     double t_end;
     int    steps;
@@ -101,9 +79,7 @@ struct SimulationResult {
     int    checkpoint_count;      // number of checkpoints actually recorded
 };
 
-// ---------------------------------------------------------------------------
-// Apply 2D rotation to a set of 3 points (x[i], y[i]) by angle theta
-// ---------------------------------------------------------------------------
+// Apply 2D rotation to points
 static void rotate_points(double x[3], double y[3], double theta) {
     double c = std::cos(theta);
     double s = std::sin(theta);
@@ -114,9 +90,7 @@ static void rotate_points(double x[3], double y[3], double theta) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Apply 2D rotation to a full state (positions + velocities)
-// ---------------------------------------------------------------------------
+// Apply 2D rotation to state
 static void rotate_state(double state[STATE_SIZE], double theta) {
     double c = std::cos(theta);
     double s = std::sin(theta);
@@ -134,12 +108,7 @@ static void rotate_state(double state[STATE_SIZE], double theta) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Compute optimal rotation angle that aligns set (x1,y1) to (x2,y2)
-// (with a given permutation of indices).
-// Minimizes Σ|R(θ)·p1_i - p2_perm[i]|²
-// Returns the optimal angle.
-// ---------------------------------------------------------------------------
+// Compute optimal rotation angle
 static double optimal_rotation_angle(
     const double x1[3], const double y1[3],
     const double x2[3], const double y2[3],
@@ -154,11 +123,7 @@ static double optimal_rotation_angle(
     return std::atan2(num, den);
 }
 
-// ---------------------------------------------------------------------------
-// Permutation + rotation-aware distance between two body configurations.
-// Tries all 6 permutations, and for each finds the optimal 2D rotation
-// that aligns the first set to the second.
-// ---------------------------------------------------------------------------
+// Permutation + rotation-aware distance
 static double permutation_rotation_distance(
     const double x1[3], const double y1[3],
     const double x2[3], const double y2[3])
@@ -168,18 +133,15 @@ static double permutation_rotation_distance(
     };
     double best = INFINITY;
     for (int p = 0; p < 6; ++p) {
-        // Find optimal rotation angle
         double theta = optimal_rotation_angle(x1, y1, x2, y2, perms[p]);
 
-        // Compute cos and sin once, reuse for all 3 bodies
         double c = std::cos(theta);
         double s = std::sin(theta);
 
         double d2 = 0.0;
         for (int i = 0; i < 3; ++i) {
             int j = perms[p][i];
-            // Rotate and compute distance in one step
-            double rx = x1[i] * c - y1[i] * s;
+                double rx = x1[i] * c - y1[i] * s;
             double ry = x1[i] * s + y1[i] * c;
             double dx = rx - x2[j];
             double dy = ry - y2[j];
@@ -190,9 +152,7 @@ static double permutation_rotation_distance(
     return std::sqrt(best);
 }
 
-// ---------------------------------------------------------------------------
-// Compute accelerations for all bodies (Newtonian gravity)
-// ---------------------------------------------------------------------------
+// Compute accelerations
 static void compute_accelerations(
     const double x[3], const double y[3],
     const double m[3],
@@ -219,9 +179,7 @@ static void compute_accelerations(
     }
 }
 
-// ---------------------------------------------------------------------------
-// One Yoshida 4th-order symplectic step
-// ---------------------------------------------------------------------------
+// Yoshida step
 static void yoshida_step(
     double x[3], double y[3],
     double vx[3], double vy[3],
@@ -232,7 +190,6 @@ static void yoshida_step(
     const double hw1 = 0.5 * w1;
     const double hw0 = 0.5 * w0;
 
-    // Stage 1: w1
     for (int i = 0; i < N; ++i) {
         x[i] += hw1 * vx[i];
         y[i] += hw1 * vy[i];
@@ -248,7 +205,6 @@ static void yoshida_step(
         y[i] += hw1 * vy[i];
     }
 
-    // Stage 2: w0
     for (int i = 0; i < N; ++i) {
         x[i] += hw0 * vx[i];
         y[i] += hw0 * vy[i];
@@ -263,7 +219,6 @@ static void yoshida_step(
         y[i] += hw0 * vy[i];
     }
 
-    // Stage 3: w1
     for (int i = 0; i < N; ++i) {
         x[i] += hw1 * vx[i];
         y[i] += hw1 * vy[i];
@@ -279,12 +234,7 @@ static void yoshida_step(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Check if body i is escaping from the other two.
-// Escape condition: specific orbital energy w.r.t. the other two > 0
-// AND radial velocity points away from their center of mass.
-// Masses are assumed equal (1.0) — the combined mass of the other two is 2.0.
-// ---------------------------------------------------------------------------
+// Check if body is escaping
 static bool is_escaping(int i, const double x[3], const double y[3],
                         const double vx[3], const double vy[3],
                         const double m[3])
@@ -311,11 +261,7 @@ static bool is_escaping(int i, const double x[3], const double y[3],
     return (E_spec > 0.0 && v_radial > 0.01);
 }
 
-// ---------------------------------------------------------------------------
-// Run a full simulation from initial conditions.
-// Argument `state` layout: [x1,x2,x3, y1,y2,y3, vx1,vx2,vx3, vy1,vy2,vy3]
-// Masses are assumed equal (1.0).
-// ---------------------------------------------------------------------------
+// Run simulation
 static SimulationResult run_simulation(const double state[STATE_SIZE]) {
     double x[3], y[3], vx[3], vy[3];
     double x0[3], y0[3];   // copy of initial positions for periodicity check
@@ -341,14 +287,14 @@ static SimulationResult run_simulation(const double state[STATE_SIZE]) {
     for (step = 0; step < MAX_STEPS; ++step) {
         yoshida_step(x, y, vx, vy, m);
 
-        // --- closest return check (permutation + rotation aware) ---
+        // Closest return check
         if (step > transient_steps) {
             double d = permutation_rotation_distance(x, y, x0, y0);
             if (d < result.closest_return)
                 result.closest_return = d;
         }
 
-        // --- checkpoint recording for archive comparison ---
+        // Checkpoint recording
         for (int c = 0; c < NUM_ARCHIVE_CHECKPOINTS; ++c) {
             if (step + 1 == ARCHIVE_CHECKPOINT_STEPS[c] && result.checkpoint_count <= c) {
                 // Record the current state at this checkpoint
@@ -363,7 +309,7 @@ static SimulationResult run_simulation(const double state[STATE_SIZE]) {
             }
         }
 
-        // --- collision check (using squared distance to avoid sqrt) ---
+        // Collision check
         double dx01 = x[0] - x[1]; double dy01 = y[0] - y[1];
         double dx02 = x[0] - x[2]; double dy02 = y[0] - y[2];
         double dx12 = x[1] - x[2]; double dy12 = y[1] - y[2];
@@ -375,7 +321,7 @@ static SimulationResult run_simulation(const double state[STATE_SIZE]) {
             break;
         }
 
-        // --- escape check (energy-based) ---
+        // Escape check
         if (is_escaping(0, x, y, vx, vy, m) ||
             is_escaping(1, x, y, vx, vy, m) ||
             is_escaping(2, x, y, vx, vy, m)) {
@@ -396,9 +342,7 @@ static SimulationResult run_simulation(const double state[STATE_SIZE]) {
     return result;
 }
 
-// ---------------------------------------------------------------------------
-// Random number generation (thread-safe with thread_local)
-// ---------------------------------------------------------------------------
+// Random number generation
 static thread_local std::mt19937_64 rng_local(std::random_device{}());
 
 static inline double rand_uniform(double min, double max) {
@@ -416,18 +360,13 @@ static inline size_t rand_index(size_t n) {
     return dist(rng_local);
 }
 
-// ---------------------------------------------------------------------------
-// Normalize: center of mass at origin, total momentum = 0
-// Layout: [x0,x1,x2, y0,y1,y2, vx0,vx1,vx2, vy0,vy1,vy2]
-// All masses = 1
-// ---------------------------------------------------------------------------
+// Normalize state
 static void normalize_state(double state[STATE_SIZE]) {
     double *x  = state;       // [0..2]
     double *y  = state + 3;   // [3..5]
     double *vx = state + 6;   // [6..8]
     double *vy = state + 9;   // [9..11]
 
-    // Center of mass
     double cm_x = (x[0] + x[1] + x[2]) / 3.0;
     double cm_y = (y[0] + y[1] + y[2]) / 3.0;
     for (int i = 0; i < 3; ++i) {
@@ -435,7 +374,6 @@ static void normalize_state(double state[STATE_SIZE]) {
         y[i] -= cm_y;
     }
 
-    // Center of mass velocity (total momentum / total mass)
     double cm_vx = (vx[0] + vx[1] + vx[2]) / 3.0;
     double cm_vy = (vy[0] + vy[1] + vy[2]) / 3.0;
     for (int i = 0; i < 3; ++i) {
@@ -444,28 +382,21 @@ static void normalize_state(double state[STATE_SIZE]) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Normalize scale: scale positions and velocities so that sum of squared radii = 12
-// This ensures orbits of different sizes are compared fairly.
-// In a scaled system, both positions and velocities scale the same way.
-// ---------------------------------------------------------------------------
+// Normalize scale
 static void normalize_scale(double state[STATE_SIZE]) {
     double *x  = state;       // [0..2]
     double *y  = state + 3;   // [3..5]
     double *vx = state + 6;   // [6..8]
     double *vy = state + 9;   // [9..11]
 
-    // Compute sum of squared radii
     double r2 = 0.0;
     for (int i = 0; i < 3; ++i) {
         r2 += x[i] * x[i] + y[i] * y[i];
     }
 
-    // Target: sum of squared radii = 12
     constexpr double TARGET_R2 = 12.0;
     double scale = std::sqrt(TARGET_R2 / r2);
 
-    // Apply scaling to positions and velocities
     for (int i = 0; i < 3; ++i) {
         x[i] *= scale;
         y[i] *= scale;
@@ -474,11 +405,7 @@ static void normalize_scale(double state[STATE_SIZE]) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Compute kinetic and potential energy for a state.
-// Returns KE and PE via output parameters.
-// Units: G=1, m_i=1
-// ---------------------------------------------------------------------------
+// Compute energies
 static void compute_energies(const double state[STATE_SIZE], double &KE, double &PE) {
     const double *x  = state;
     const double *y  = state + 3;
@@ -501,17 +428,12 @@ static void compute_energies(const double state[STATE_SIZE], double &KE, double 
     }
 }
 
-// ---------------------------------------------------------------------------
-// Ensure total energy is negative by rescaling velocities
-// If E >= 0, we scale velocities by sqrt(0.9 * |PE| / KE) so that
-// new KE = 0.9 * |PE|, giving E = -0.1 * |PE| < 0
-// ---------------------------------------------------------------------------
+// Ensure bound (E < 0)
 static void ensure_bound(double state[STATE_SIZE]) {
     double KE, PE;
     compute_energies(state, KE, PE);
     if (KE + PE < 0.0) return;  // already bound
 
-    // Desired KE = 0.9 * |PE| so E = KE + PE = -0.1 * |PE| < 0
     double scale = std::sqrt(0.9 * std::abs(PE) / KE);
     double *vx = state + 6;
     double *vy = state + 9;
@@ -521,22 +443,13 @@ static void ensure_bound(double state[STATE_SIZE]) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Generate a random initial condition
-// ---------------------------------------------------------------------------
+// Generate random state
 static void generate_random_state(double state[STATE_SIZE]) {
     double *x  = state;
     double *y  = state + 3;
     double *vx = state + 6;
     double *vy = state + 9;
 
-    // Use the integrated generator to create a bound system
-    // Note: We do NOT canonicalize here because it would break body tracking during simulation
-    // The generator still ensures:
-    // - Center of mass at origin
-    // - Total momentum = 0
-    // - Scale normalized (Σr² = 12)
-    // - Bound (E < 0)
     
     std::uniform_real_distribution<double> pos(-GENERATOR_POS_RANGE, GENERATOR_POS_RANGE);
     std::uniform_real_distribution<double> vel(-GENERATOR_VEL_RANGE, GENERATOR_VEL_RANGE);
@@ -548,7 +461,6 @@ static void generate_random_state(double state[STATE_SIZE]) {
     };
 
     while (true) {
-        // Generate positions
         x[0] = pos(rng_local);
         y[0] = pos(rng_local);
         x[1] = pos(rng_local);
@@ -556,7 +468,7 @@ static void generate_random_state(double state[STATE_SIZE]) {
         x[2] = -(x[0] + x[1]);
         y[2] = -(y[0] + y[1]);
 
-        // Normalize Σr² = GENERATOR_TARGET_R2
+        // Normalize scale
         double sumr2 = 0;
         for (int i = 0; i < 3; i++)
             sumr2 += x[i] * x[i] + y[i] * y[i];
@@ -566,12 +478,10 @@ static void generate_random_state(double state[STATE_SIZE]) {
             y[i] *= scale;
         }
 
-        // Check minimum distance
         if (dist(0, 1) < GENERATOR_MIN_DIST) continue;
         if (dist(0, 2) < GENERATOR_MIN_DIST) continue;
         if (dist(1, 2) < GENERATOR_MIN_DIST) continue;
 
-        // Generate velocities
         vx[0] = vel(rng_local);
         vy[0] = vel(rng_local);
         vx[1] = vel(rng_local);
@@ -579,7 +489,7 @@ static void generate_random_state(double state[STATE_SIZE]) {
         vx[2] = -(vx[0] + vx[1]);
         vy[2] = -(vy[0] + vy[1]);
 
-        // Energy check: ensure bound (E < 0)
+        // Energy check
         double T = 0;
         for (int i = 0; i < 3; i++)
             T += 0.5 * (vx[i] * vx[i] + vy[i] * vy[i]);
@@ -588,7 +498,6 @@ static void generate_random_state(double state[STATE_SIZE]) {
 
         if (T + U >= 0) continue;
 
-        // Center of mass and momentum (but do NOT canonicalize)
         double cm_x = (x[0] + x[1] + x[2]) / 3.0;
         double cm_y = (y[0] + y[1] + y[2]) / 3.0;
         for (int i = 0; i < 3; ++i) {
@@ -606,37 +515,27 @@ static void generate_random_state(double state[STATE_SIZE]) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Crossover: two parents produce one child.
-// The child is a weighted average of parents + small random perturbation.
-// ---------------------------------------------------------------------------
+// Crossover
 static void crossover(
     const double p1[STATE_SIZE],
     const double p2[STATE_SIZE],
     double child[STATE_SIZE],
     double mutation_sigma)
 {
-    // Blend (uniform crossover of each component)
     for (int i = 0; i < STATE_SIZE; ++i) {
         double alpha = rand_uniform(MUTATION_ALPHA_MIN, MUTATION_ALPHA_MAX);  // extrapolate a bit
         child[i] = alpha * p1[i] + (1.0 - alpha) * p2[i];
     }
 
-    // Add Gaussian noise
     for (int i = 0; i < STATE_SIZE; ++i) {
         child[i] += rand_normal(0.0, mutation_sigma);
     }
 
-    // Renormalize
     normalize_state(child);
     ensure_bound(child);
 }
 
-// ---------------------------------------------------------------------------
-// Evaluate fitness of a single individual.
-// score = steps (lifetime) * (1 + closest_return_bonus)
-// Also stores the raw metrics for output.
-// ---------------------------------------------------------------------------
+// Evaluate fitness
 struct FitnessResult {
     double score;
     int    steps;
@@ -652,24 +551,18 @@ static FitnessResult evaluate_fitness(const double state[STATE_SIZE]) {
     fr.steps = sim.steps;
     fr.closest_return = sim.closest_return;
 
-    // Base fitness: number of steps survived
     double base = (double)sim.steps;
 
-    // Bonus for closest return: exp(-dist / sigma)
-    // If no return was detected (INFINITY), bonus is 0
     double bonus = (sim.closest_return == INFINITY)
         ? 0.0
         : std::exp(-sim.closest_return / RETURN_BONUS_SIGMA);
 
-    // Combined score
     fr.score = base * (1.0 + bonus);
 
     return fr;
 }
 
-// ---------------------------------------------------------------------------
-// Tournament selection: pick k random individuals, return the best index.
-// ---------------------------------------------------------------------------
+// Tournament selection
 static size_t tournament_select(
     const std::vector<double>& scores,
     size_t tournament_size)
@@ -688,16 +581,11 @@ static size_t tournament_select(
     return best_idx;
 }
 
-// Forward declaration for permutation_rotation_state_distance (defined below)
 static double permutation_rotation_state_distance(
     const double s1[STATE_SIZE],
     const double s2[STATE_SIZE]);
 
-// ---------------------------------------------------------------------------
-// Diversity penalty: minimum permutation+rotation-aware distance from state
-// to all others in the given set (excluding exclude_idx).
-// Uses the same symmetry-aware metric as the archive distance.
-// ---------------------------------------------------------------------------
+// Diversity penalty
 static double crowding_distance(
     const double state[STATE_SIZE],
     const std::vector<std::vector<double>>& population,
@@ -712,28 +600,19 @@ static double crowding_distance(
     return min_dist;
 }
 
-// ---------------------------------------------------------------------------
-// Permutation + rotation-aware distance between two full states (positions + velocities).
-// Since bodies have equal mass, we try all 6 permutations and for each find the
-// optimal 2D rotation that aligns the first set to the second.
-// Also considers time-reversed orbits (velocities negated) for time symmetry.
-// Internal layout: [x1,x2,x3, y1,y2,y3, vx1,vx2,vx3, vy1,vy2,vy3]
-// ---------------------------------------------------------------------------
+// Permutation + rotation-aware distance (full state)
 static double permutation_rotation_state_distance(
     const double s1[STATE_SIZE],
     const double s2[STATE_SIZE])
 {
-    // Create normalized copies to ensure consistent reference frame
     double n1[STATE_SIZE], n2[STATE_SIZE];
     std::copy(s1, s1 + STATE_SIZE, n1);
     std::copy(s2, s2 + STATE_SIZE, n2);
     normalize_state(n1);
     normalize_state(n2);
-    // Also normalize scale to catch size-scaled versions of the same orbit
     normalize_scale(n1);
     normalize_scale(n2);
 
-    // Pre-compute position arrays for faster access
     const double *x1 = n1;
     const double *y1 = n1 + 3;
     const double *vx1 = n1 + 6;
@@ -748,23 +627,18 @@ static double permutation_rotation_state_distance(
     };
     double best = INFINITY;
     
-    // Helper lambda to compute distance for a given velocity configuration
     auto compute_dist = [&](const double* vx1_local, const double* vy1_local) {
         double best_local = INFINITY;
         for (int p = 0; p < 6; ++p) {
-            // Find optimal rotation angle based on positions
-            double theta = optimal_rotation_angle(x1, y1, x2, y2, perms[p]);
+                double theta = optimal_rotation_angle(x1, y1, x2, y2, perms[p]);
             
-            // Compute cos and sin once, reuse for all bodies
-            double c = std::cos(theta);
+                double c = std::cos(theta);
             double s = std::sin(theta);
             double d2 = 0.0;
             for (int i = 0; i < 3; ++i) {
                 int j = perms[p][i];
-                // Rotate positions
                 double rx = x1[i] * c - y1[i] * s;
                 double ry = x1[i] * s + y1[i] * c;
-                // Rotate velocities
                 double rvx = vx1_local[i] * c - vy1_local[i] * s;
                 double rvy = vx1_local[i] * s + vy1_local[i] * c;
                 
@@ -779,10 +653,8 @@ static double permutation_rotation_state_distance(
         return best_local;
     };
     
-    // Check normal orientation
     best = compute_dist(vx1, vy1);
     
-    // Check time-reversed orientation (negate velocities)
     double vx1_rev[3], vy1_rev[3];
     for (int i = 0; i < 3; ++i) {
         vx1_rev[i] = -vx1[i];
@@ -794,11 +666,7 @@ static double permutation_rotation_state_distance(
     return std::sqrt(best);
 }
 
-// ---------------------------------------------------------------------------
-// Archive distance: minimum distance from state to all entries in archive.
-// Uses permutation + rotation-aware distance (bodies are indistinguishable).
-// Returns INFINITY if archive is empty.
-// ---------------------------------------------------------------------------
+// Archive distance
 static double archive_distance(
     const double state[STATE_SIZE],
     const std::vector<std::vector<double>>& archive)
@@ -812,11 +680,7 @@ static double archive_distance(
     return min_dist;
 }
 
-// ---------------------------------------------------------------------------
-// Load a state from a file in 3body.cpp format.
-// Skips comment lines (#), reads first non-comment line with 12 numbers.
-// Returns 0 on success, 1 on failure.
-// ---------------------------------------------------------------------------
+// Load state from file
 static int load_state_from_file(const char *filename, double state[STATE_SIZE]) {
     FILE *fp = fopen(filename, "r");
     if (!fp) {
@@ -827,7 +691,6 @@ static int load_state_from_file(const char *filename, double state[STATE_SIZE]) 
     char line[1024];
     int found = 0;
     while (fgets(line, sizeof(line), fp)) {
-        // Skip comment lines, blank lines
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
 
         double vals[STATE_SIZE];
@@ -838,12 +701,6 @@ static int load_state_from_file(const char *filename, double state[STATE_SIZE]) 
             &vals[6], &vals[7], &vals[8], &vals[9], &vals[10], &vals[11]);
 
         if (n == STATE_SIZE) {
-            // File format: [x1,y1, x2,y2, x3,y3, vx1,vy1, vx2,vy2, vx3,vy3]
-            // Internal format: [x1,x2,x3, y1,y2,y3, vx1,vx2,vx3, vy1,vy2,vy3]
-            // Convert: internal[0..2] = {vals[0], vals[2], vals[4]} (x coords)
-            //          internal[3..5] = {vals[1], vals[3], vals[5]} (y coords)
-            //          internal[6..8] = {vals[6], vals[8], vals[10]} (vx)
-            //          internal[9..11] = {vals[7], vals[9], vals[11]} (vy)
             state[0] = vals[0]; state[1] = vals[2]; state[2] = vals[4];
             state[3] = vals[1]; state[4] = vals[3]; state[5] = vals[5];
             state[6] = vals[6]; state[7] = vals[8]; state[8] = vals[10];
@@ -861,12 +718,7 @@ static int load_state_from_file(const char *filename, double state[STATE_SIZE]) 
     return 0;
 }
 
-// ---------------------------------------------------------------------------
-// Load all states from an archive file.
-// Archive format: lines starting with # are metadata, lines with 12 nums are
-// states. File format is same as 3body.cpp: x1 y1 x2 y2 x3 y3 vx1 vy1 vx2 vy2 vx3 vy3
-// Returns number of states loaded.
-// ---------------------------------------------------------------------------
+// Load states from archive
 static size_t load_states_from_archive(const char *filename,
                                        std::vector<std::vector<double>>& archive)
 {
@@ -894,9 +746,7 @@ static size_t load_states_from_archive(const char *filename,
             state[3] = vals[1]; state[4] = vals[3]; state[5] = vals[5];
             state[6] = vals[6]; state[7] = vals[8]; state[8] = vals[10];
             state[9] = vals[7]; state[10] = vals[9]; state[11] = vals[11];
-            // Normalize the loaded state to ensure consistent reference frame
             normalize_state(state.data());
-            // Also normalize scale to ensure consistent size
             normalize_scale(state.data());
             archive.push_back(state);
             ++count;
@@ -907,11 +757,7 @@ static size_t load_states_from_archive(const char *filename,
     return count;
 }
 
-// ---------------------------------------------------------------------------
-// Save a state to archive file (append mode).
-// Format: # score=... steps=... closest_return=... seed=...
-//         x1 y1 x2 y2 x3 y3  vx1 vy1 vx2 vy2 vx3 vy3
-// ---------------------------------------------------------------------------
+// Save state to archive
 static void save_state_to_archive(
     const char *filename,
     const double state[STATE_SIZE],
@@ -924,7 +770,6 @@ static void save_state_to_archive(
         return;
     }
 
-    // Convert internal format to file format
     const double *x  = state;       // [0..2]
     const double *y  = state + 3;   // [3..5]
     const double *vx = state + 6;   // [6..8]
@@ -940,10 +785,7 @@ static void save_state_to_archive(
     fclose(fp);
 }
 
-// ---------------------------------------------------------------------------
-// Generate initial states for the refine mode:
-// take the base state and create N mutated copies around it.
-// ---------------------------------------------------------------------------
+// Generate refined population
 static void generate_refined_population(
     const double base_state[STATE_SIZE],
     std::vector<std::vector<double>>& population,
@@ -951,10 +793,8 @@ static void generate_refined_population(
 {
     for (size_t i = 0; i < population.size(); ++i) {
         if (i == 0) {
-            // Keep the original unchanged
             std::copy(base_state, base_state + STATE_SIZE, population[i].begin());
         } else {
-            // Mutated copy
             std::copy(base_state, base_state + STATE_SIZE, population[i].begin());
             for (int j = 0; j < STATE_SIZE; ++j) {
                 population[i][j] += rand_normal(0.0, mutation_sigma);
