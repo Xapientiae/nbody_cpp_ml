@@ -22,14 +22,14 @@ endif
 
 all: model 3body
 
-model: model.cpp population.hpp constants.hpp
+model: model.cpp population.hpp
 	$(CXX) $(CXXFLAGS) model.cpp -o model $(LDFLAGS)
 
-3body: 3body.cpp population.hpp constants.hpp
+3body: 3body.cpp population.hpp
 	$(CXX) $(CXXFLAGS) 3body.cpp -o 3body $(LDFLAGS)
 
 # CUDA-enabled model
-model_cuda: model_cuda.cpp cuda_simulation.cu cuda_simulation.cuh population.hpp constants.hpp
+model_cuda: model_cuda.cpp cuda_simulation.cu cuda_simulation.cuh population.hpp
 	$(NVCC) $(NVCCFLAGS) cuda_simulation.cu -c -o cuda_simulation.o
 	$(CXX) $(CXXFLAGS) -c model_cuda.cpp -o model_cuda.o
 	$(CXX) model_cuda.o cuda_simulation.o -o model_cuda $(LDFLAGS) -lcudart

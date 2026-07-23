@@ -64,8 +64,7 @@ make CUDA=1
 - `model.cpp` - Main evolutionary search (CPU)
 - `model_cuda.cpp` - CUDA-accelerated version
 - `3body.cpp` - Orbit simulator
-- `population.hpp` - Simulation engine, genetic operators, and fitness functions
-- `constants.hpp` - All simulation constants
+- `population.hpp` - Simulation engine, genetic operators, fitness functions, and all constants
 - `cuda_simulation.cu/cuh` - CUDA kernel implementations
 - `Makefile` - Build system
 - `run.sh` - Automated pipeline script
