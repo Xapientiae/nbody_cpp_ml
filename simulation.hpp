@@ -104,20 +104,18 @@ static double permutation_rotation_distance(
         // Find optimal rotation angle
         double theta = optimal_rotation_angle(x1, y1, x2, y2, perms[p]);
 
-        // Rotate x1,y1 and compute distance
-        double rx[3], ry[3];
+        // Compute cos and sin once, reuse for all 3 bodies
         double c = std::cos(theta);
         double s = std::sin(theta);
-        for (int i = 0; i < 3; ++i) {
-            rx[i] = x1[i] * c - y1[i] * s;
-            ry[i] = x1[i] * s + y1[i] * c;
-        }
 
         double d2 = 0.0;
         for (int i = 0; i < 3; ++i) {
             int j = perms[p][i];
-            double dx = rx[i] - x2[j];
-            double dy = ry[i] - y2[j];
+            // Rotate and compute distance in one step
+            double rx = x1[i] * c - y1[i] * s;
+            double ry = x1[i] * s + y1[i] * c;
+            double dx = rx - x2[j];
+            double dy = ry - y2[j];
             d2 += dx * dx + dy * dy;
         }
         if (d2 < best) best = d2;
@@ -142,14 +140,14 @@ static void compute_accelerations(
             double dx = x[j] - x[i];
             double dy = y[j] - y[i];
             double r2 = dx * dx + dy * dy;
-            double r  = std::sqrt(r2);
-            double r3 = r2 * r;
-            double f  = G / r3;
+            double inv_r3 = G / (r2 * std::sqrt(r2));
+            double f_ij = inv_r3 * m[j];
+            double f_ji = inv_r3 * m[i];
 
-            ax[i] += f * m[j] * dx;
-            ay[i] += f * m[j] * dy;
-            ax[j] -= f * m[i] * dx;
-            ay[j] -= f * m[i] * dy;
+            ax[i] += f_ij * dx;
+            ay[i] += f_ij * dy;
+            ax[j] -= f_ji * dx;
+            ay[j] -= f_ji * dy;
         }
     }
 }
@@ -162,28 +160,55 @@ static void yoshida_step(
     double vx[3], double vy[3],
     const double m[3])
 {
-    const double w[3] = {YOSHIDA_C1, YOSHIDA_C0, YOSHIDA_C1};
+    const double w1 = YOSHIDA_C1 * DT;
+    const double w0 = YOSHIDA_C0 * DT;
+    const double hw1 = 0.5 * w1;
+    const double hw0 = 0.5 * w0;
 
-    for (int s = 0; s < 3; ++s) {
-        double hh = 0.5 * w[s] * DT;
-        double h  = w[s] * DT;
+    // Stage 1: w1
+    for (int i = 0; i < N; ++i) {
+        x[i] += hw1 * vx[i];
+        y[i] += hw1 * vy[i];
+    }
+    double ax[3], ay[3];
+    compute_accelerations(x, y, m, ax, ay);
+    for (int i = 0; i < N; ++i) {
+        vx[i] += w1 * ax[i];
+        vy[i] += w1 * ay[i];
+    }
+    for (int i = 0; i < N; ++i) {
+        x[i] += hw1 * vx[i];
+        y[i] += hw1 * vy[i];
+    }
 
-        for (int i = 0; i < N; ++i) {
-            x[i] += hh * vx[i];
-            y[i] += hh * vy[i];
-        }
+    // Stage 2: w0
+    for (int i = 0; i < N; ++i) {
+        x[i] += hw0 * vx[i];
+        y[i] += hw0 * vy[i];
+    }
+    compute_accelerations(x, y, m, ax, ay);
+    for (int i = 0; i < N; ++i) {
+        vx[i] += w0 * ax[i];
+        vy[i] += w0 * ay[i];
+    }
+    for (int i = 0; i < N; ++i) {
+        x[i] += hw0 * vx[i];
+        y[i] += hw0 * vy[i];
+    }
 
-        double ax[3], ay[3];
-        compute_accelerations(x, y, m, ax, ay);
-        for (int i = 0; i < N; ++i) {
-            vx[i] += h * ax[i];
-            vy[i] += h * ay[i];
-        }
-
-        for (int i = 0; i < N; ++i) {
-            x[i] += hh * vx[i];
-            y[i] += hh * vy[i];
-        }
+    // Stage 3: w1
+    for (int i = 0; i < N; ++i) {
+        x[i] += hw1 * vx[i];
+        y[i] += hw1 * vy[i];
+    }
+    compute_accelerations(x, y, m, ax, ay);
+    for (int i = 0; i < N; ++i) {
+        vx[i] += w1 * ax[i];
+        vy[i] += w1 * ay[i];
+    }
+    for (int i = 0; i < N; ++i) {
+        x[i] += hw1 * vx[i];
+        y[i] += hw1 * vy[i];
     }
 }
 
@@ -243,6 +268,7 @@ static SimulationResult run_simulation(const double state[STATE_SIZE]) {
 
     // Track closest return only after the initial transient
     const int transient_steps = MAX_STEPS / TRANSIENT_RATIO;
+    const double collision_dist_sq = COLLISION_DIST * COLLISION_DIST;
 
     int step;
     for (step = 0; step < MAX_STEPS; ++step) {
@@ -270,12 +296,14 @@ static SimulationResult run_simulation(const double state[STATE_SIZE]) {
             }
         }
 
-        // --- collision check ---
-        double d01 = std::hypot(x[0] - x[1], y[0] - y[1]);
-        double d02 = std::hypot(x[0] - x[2], y[0] - y[2]);
-        double d12 = std::hypot(x[1] - x[2], y[1] - y[2]);
+        // --- collision check (using squared distance to avoid sqrt) ---
+        double dx01 = x[0] - x[1]; double dy01 = y[0] - y[1];
+        double dx02 = x[0] - x[2]; double dy02 = y[0] - y[2];
+        double dx12 = x[1] - x[2]; double dy12 = y[1] - y[2];
 
-        if (d01 < COLLISION_DIST || d02 < COLLISION_DIST || d12 < COLLISION_DIST) {
+        if ((dx01*dx01 + dy01*dy01) < collision_dist_sq ||
+            (dx02*dx02 + dy02*dy02) < collision_dist_sq ||
+            (dx12*dx12 + dy12*dy12) < collision_dist_sq) {
             result.reason = StopReason::COLLISION;
             break;
         }

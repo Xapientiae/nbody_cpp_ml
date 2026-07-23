@@ -66,16 +66,75 @@ setup() {
 }
 
 # ---------------------------------------------------------------------------
+# Quick test: small population, few generations
+# ---------------------------------------------------------------------------
+run_quick() {
+    local SEED=42
+    log "Quick test (popsize=64, generations=10, seed=$SEED)..."
+    ./model --popsize=64 --generations=10 --seed=$SEED 2>&1 | tee -a "$LOG" | grep -E '(Gen |Done)'
+    ok "Quick test complete"
+}
+
+# ---------------------------------------------------------------------------
+# Explore: search with multiple seeds to fill archive
+# ---------------------------------------------------------------------------
+run_explore() {
+    log "Exploring with 10 different seeds..."
+    for SEED in 42 123 456 789 1111 2222 3333 4444 5555 6666; do
+        log "  Seed $SEED..."
+        ./model --popsize=256 --generations=30 --seed=$SEED 2>&1 | tee -a "$LOG" | grep -E '(Gen |Done|added to archive)'
+    done
+    ok "Exploration complete"
+}
+
+# ---------------------------------------------------------------------------
+# Refine: refine all orbits in archive
+# ---------------------------------------------------------------------------
+run_refine() {
+    if [ ! -f "$ARCHIVE" ]; then
+        warn "No archive found. Run 'explore' first."
+        return
+    fi
+
+    log "Refining orbits from archive..."
+    # Extract each state from archive and refine it
+    awk '
+        /^[^#]/ {
+            if (state == "") {
+                state = $0
+            } else {
+                state = state "\n" $0
+            }
+        }
+        /^# score/ {
+            if (state != "") {
+                print state
+                state = ""
+            }
+        }
+        END { if (state != "") print state }
+    ' "$ARCHIVE" | while IFS= read -r line; do
+        # Each state is 12 numbers on one line
+        TMPFILE=$(mktemp "$OUTPUT_DIR/tmp_refine_XXXXXX.txt")
+        echo "$line" > "$TMPFILE"
+        log "  Refining orbit from $TMPFILE..."
+        ./model --refine="$TMPFILE" --popsize=64 --generations=10 --mutation-sigma=0.02 --seed=42 2>&1 | tee -a "$LOG" | grep -E '(Gen |Done|added to archive)'
+        rm -f "$TMPFILE"
+    done
+    ok "Refinement complete"
+}
+
+# ---------------------------------------------------------------------------
 # Deep run: one big search
 # ---------------------------------------------------------------------------
 run_deep() {
-    local DEEP_SEED=$(date +%s)
+    log "Deep search (popsize=8192, generations=12)..."
     ./model --popsize=8192 --generations=12 2>&1 | tee -a "$LOG" | grep -E '(Gen |Done)'
     ok "Deep search complete"
 }
 
 run_lucky() {
-    local DEEP_SEED=$(date +%s)
+    log "Lucky search (popsize=50000, generations=1)..."
     ./model --popsize=50000 --generations=1 2>&1 | tee -a "$LOG" | grep -E '(Gen |Done)'
     ok "Lucky search complete"
 }
@@ -229,6 +288,21 @@ run_summary() {
 # Main
 # ---------------------------------------------------------------------------
 case "${1:-quick}" in
+    quick)
+        setup
+        run_quick
+        run_summary
+        ;;
+    explore)
+        setup
+        run_explore
+        run_summary
+        ;;
+    refine)
+        setup
+        run_refine
+        run_summary
+        ;;
     deep)
         setup
         run_deep
@@ -241,33 +315,34 @@ case "${1:-quick}" in
         ;;
     all)
         setup
-        run_quick
-        echo ""
         run_explore
         echo ""
         run_refine
         echo ""
-        run_deep || true  # deep może być długie, nie przerywaj całego pipeline'u
+        run_deep || true
         echo ""
         run_summary
         log "Full pipeline complete!"
         ;;
     viz)
+        setup
         run_viz
         ;;
     viz-all)
+        setup
         run_viz_all
         ;;
     summary)
         run_summary
         ;;
     *)
-        echo "Usage: $0 {quick|explore|refine|deep|all|viz|viz-all|summary}"
+        echo "Usage: $0 {quick|explore|refine|deep|lucky|all|viz|viz-all|summary}"
         echo ""
         echo "  quick     — Fast test (popsize=64, generations=10, seed=42)"
         echo "  explore   — Search with 10 different seeds → fill archive"
         echo "  refine    — Refine all orbits in archive"
-        echo "  deep      — One big search (popsize=512, generations=100)"
+        echo "  deep      — One big search (popsize=8192, generations=12)"
+        echo "  lucky     — Massive random search (popsize=50000, generations=1)"
         echo "  all       — Full pipeline: explore → refine → deep"
         echo "  viz       — Generate video from best.txt"
         echo "  viz-all   — Generate videos for ALL orbits in archive"

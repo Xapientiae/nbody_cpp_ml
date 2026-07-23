@@ -3,7 +3,6 @@
 
 #include <cmath>
 #include <cstdlib>
-#include <cstring>
 #include <random>
 #include <vector>
 #include <string>
@@ -92,23 +91,22 @@ static void normalize_scale(double state[STATE_SIZE]) {
 }
 
 // ---------------------------------------------------------------------------
-// Compute total energy (should be negative for bound systems)
+// Compute kinetic and potential energy for a state.
+// Returns KE and PE via output parameters.
 // Units: G=1, m_i=1
 // ---------------------------------------------------------------------------
-static double total_energy(const double state[STATE_SIZE]) {
+static void compute_energies(const double state[STATE_SIZE], double &KE, double &PE) {
     const double *x  = state;
     const double *y  = state + 3;
     const double *vx = state + 6;
     const double *vy = state + 9;
 
-    // Kinetic energy
-    double KE = 0.0;
+    KE = 0.0;
     for (int i = 0; i < 3; ++i) {
         KE += 0.5 * (vx[i] * vx[i] + vy[i] * vy[i]);
     }
 
-    // Potential energy (-1/r_ij)
-    double PE = 0.0;
+    PE = 0.0;
     for (int i = 0; i < 3; ++i) {
         for (int j = i + 1; j < 3; ++j) {
             double dx = x[j] - x[i];
@@ -117,8 +115,6 @@ static double total_energy(const double state[STATE_SIZE]) {
             PE -= 1.0 / r;
         }
     }
-
-    return KE + PE;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,32 +123,14 @@ static double total_energy(const double state[STATE_SIZE]) {
 // new KE = 0.9 * |PE|, giving E = -0.1 * |PE| < 0
 // ---------------------------------------------------------------------------
 static void ensure_bound(double state[STATE_SIZE]) {
-    double E = total_energy(state);
-    if (E < 0.0) return;   // already bound
-
-    const double *x  = state;
-    const double *y  = state + 3;
-    double *vx = state + 6;
-    double *vy = state + 9;
-
-    // Recompute KE and PE
-    double KE = 0.0;
-    for (int i = 0; i < 3; ++i) {
-        KE += 0.5 * (vx[i] * vx[i] + vy[i] * vy[i]);
-    }
-
-    double PE = 0.0;
-    for (int i = 0; i < 3; ++i) {
-        for (int j = i + 1; j < 3; ++j) {
-            double dx = x[j] - x[i];
-            double dy = y[j] - y[i];
-            double r  = std::sqrt(dx * dx + dy * dy);
-            PE -= 1.0 / r;
-        }
-    }
+    double KE, PE;
+    compute_energies(state, KE, PE);
+    if (KE + PE < 0.0) return;  // already bound
 
     // Desired KE = 0.9 * |PE| so E = KE + PE = -0.1 * |PE| < 0
     double scale = std::sqrt(0.9 * std::abs(PE) / KE);
+    double *vx = state + 6;
+    double *vy = state + 9;
     for (int i = 0; i < 3; ++i) {
         vx[i] *= scale;
         vy[i] *= scale;
@@ -160,8 +138,138 @@ static void ensure_bound(double state[STATE_SIZE]) {
 }
 
 // ---------------------------------------------------------------------------
-// Generate a random initial condition with center-of-mass normalization
-// and E < 0.
+// Canonicalize system: sort bodies, rotate to standard orientation, 
+// enforce positive angular momentum
+// ---------------------------------------------------------------------------
+static void canonicalizeSystem(
+    double x[3], double y[3],
+    double vx[3], double vy[3])
+{
+    constexpr double eps = 1e-12;
+
+    // 1. Sort bodies: higher y first, if equal: lower x first
+    int order[3] = {0, 1, 2};
+
+    std::sort(order, order + 3, [&](int a, int b) {
+        if (std::abs(y[a] - y[b]) > eps)
+            return y[a] > y[b];
+        return x[a] < x[b];
+    });
+
+    double nx[3], ny[3], nvx[3], nvy[3];
+    for (int i = 0; i < 3; i++) {
+        nx[i] = x[order[i]];
+        ny[i] = y[order[i]];
+        nvx[i] = vx[order[i]];
+        nvy[i] = vy[order[i]];
+    }
+    for (int i = 0; i < 3; i++) {
+        x[i] = nx[i];
+        y[i] = ny[i];
+        vx[i] = nvx[i];
+        vy[i] = nvy[i];
+    }
+
+    // 2. Rotate so body 0 has x=0, y>0
+    double theta = std::atan2(x[0], y[0]);
+    double c = std::cos(theta);
+    double s = std::sin(theta);
+
+    for (int i = 0; i < 3; i++) {
+        double rx = c * x[i] - s * y[i];
+        double ry = s * x[i] + c * y[i];
+        x[i] = rx;
+        y[i] = ry;
+        double rvx = c * vx[i] - s * vy[i];
+        double rvy = s * vx[i] + c * vy[i];
+        vx[i] = rvx;
+        vy[i] = rvy;
+    }
+
+    // 3. Make angular momentum positive
+    double L = 0;
+    for (int i = 0; i < 3; i++)
+        L += x[i] * vy[i] - y[i] * vx[i];
+
+    if (L < 0) {
+        for (int i = 0; i < 3; i++) {
+            vx[i] *= -1;
+            vy[i] *= -1;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Generate a random bound 3-body system with canonicalization
+// ---------------------------------------------------------------------------
+static void generateSystem(
+    double x[3], double y[3],
+    double vx[3], double vy[3],
+    std::mt19937_64& rng,
+    double pos_range = GENERATOR_POS_RANGE,
+    double vel_range = GENERATOR_VEL_RANGE,
+    double minDist = GENERATOR_MIN_DIST,
+    double target_r2 = GENERATOR_TARGET_R2)
+{
+    std::uniform_real_distribution<double> pos(-pos_range, pos_range);
+    std::uniform_real_distribution<double> vel(-vel_range, vel_range);
+
+    auto dist = [&](int a, int b) {
+        double dx = x[a] - x[b];
+        double dy = y[a] - y[b];
+        return std::sqrt(dx * dx + dy * dy);
+    };
+
+    while (true) {
+        // Generate positions
+        x[0] = pos(rng);
+        y[0] = pos(rng);
+        x[1] = pos(rng);
+        y[1] = pos(rng);
+        x[2] = -(x[0] + x[1]);
+        y[2] = -(y[0] + y[1]);
+
+        // Normalize Σr² = target_r2
+        double sumr2 = 0;
+        for (int i = 0; i < 3; i++)
+            sumr2 += x[i] * x[i] + y[i] * y[i];
+        double scale = std::sqrt(target_r2 / sumr2);
+        for (int i = 0; i < 3; i++) {
+            x[i] *= scale;
+            y[i] *= scale;
+        }
+
+        // Check minimum distance
+        if (dist(0, 1) < minDist) continue;
+        if (dist(0, 2) < minDist) continue;
+        if (dist(1, 2) < minDist) continue;
+
+        // Generate velocities
+        vx[0] = vel(rng);
+        vy[0] = vel(rng);
+        vx[1] = vel(rng);
+        vy[1] = vel(rng);
+        vx[2] = -(vx[0] + vx[1]);
+        vy[2] = -(vy[0] + vy[1]);
+
+        // Energy check: ensure bound (E < 0)
+        double T = 0;
+        for (int i = 0; i < 3; i++)
+            T += 0.5 * (vx[i] * vx[i] + vy[i] * vy[i]);
+
+        double U = -1.0 / dist(0, 1) - 1.0 / dist(0, 2) - 1.0 / dist(1, 2);
+
+        if (T + U >= 0) continue;
+
+        // Canonicalize: sort, rotate, positive angular momentum
+        canonicalizeSystem(x, y, vx, vy);
+
+        return;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Generate a random initial condition
 // ---------------------------------------------------------------------------
 static void generate_random_state(double state[STATE_SIZE]) {
     double *x  = state;
@@ -169,67 +277,80 @@ static void generate_random_state(double state[STATE_SIZE]) {
     double *vx = state + 6;
     double *vy = state + 9;
 
-    // Generate positions in a box, but ensure no pair is too close
-    bool found_valid = false;
-    for (int attempt = 0; attempt < 100; ++attempt) {
-        for (int i = 0; i < 3; ++i) {
-            x[i] = rand_uniform(POSITION_BOX_MIN, POSITION_BOX_MAX);
-            y[i] = rand_uniform(POSITION_BOX_MIN, POSITION_BOX_MAX);
+    // Use the integrated generator to create a bound system
+    // Note: We do NOT canonicalize here because it would break body tracking during simulation
+    // The generator still ensures:
+    // - Center of mass at origin
+    // - Total momentum = 0
+    // - Scale normalized (Σr² = 12)
+    // - Bound (E < 0)
+    
+    std::uniform_real_distribution<double> pos(-GENERATOR_POS_RANGE, GENERATOR_POS_RANGE);
+    std::uniform_real_distribution<double> vel(-GENERATOR_VEL_RANGE, GENERATOR_VEL_RANGE);
+
+    auto dist = [&](int a, int b) {
+        double dx = x[a] - x[b];
+        double dy = y[a] - y[b];
+        return std::sqrt(dx * dx + dy * dy);
+    };
+
+    while (true) {
+        // Generate positions
+        x[0] = pos(rng_local);
+        y[0] = pos(rng_local);
+        x[1] = pos(rng_local);
+        y[1] = pos(rng_local);
+        x[2] = -(x[0] + x[1]);
+        y[2] = -(y[0] + y[1]);
+
+        // Normalize Σr² = GENERATOR_TARGET_R2
+        double sumr2 = 0;
+        for (int i = 0; i < 3; i++)
+            sumr2 += x[i] * x[i] + y[i] * y[i];
+        double scale = std::sqrt(GENERATOR_TARGET_R2 / sumr2);
+        for (int i = 0; i < 3; i++) {
+            x[i] *= scale;
+            y[i] *= scale;
         }
 
-        // Check minimum distance (avoid initial collision)
-        double d01 = std::hypot(x[0] - x[1], y[0] - y[1]);
-        double d02 = std::hypot(x[0] - x[2], y[0] - y[2]);
-        double d12 = std::hypot(x[1] - x[2], y[1] - y[2]);
+        // Check minimum distance
+        if (dist(0, 1) < GENERATOR_MIN_DIST) continue;
+        if (dist(0, 2) < GENERATOR_MIN_DIST) continue;
+        if (dist(1, 2) < GENERATOR_MIN_DIST) continue;
 
-        if (d01 < POSITION_MIN_DIST || d02 < POSITION_MIN_DIST || d12 < POSITION_MIN_DIST) continue;
+        // Generate velocities
+        vx[0] = vel(rng_local);
+        vy[0] = vel(rng_local);
+        vx[1] = vel(rng_local);
+        vy[1] = vel(rng_local);
+        vx[2] = -(vx[0] + vx[1]);
+        vy[2] = -(vy[0] + vy[1]);
 
-        // Also avoid a body being too far from the origin
-        bool too_far = false;
+        // Energy check: ensure bound (E < 0)
+        double T = 0;
+        for (int i = 0; i < 3; i++)
+            T += 0.5 * (vx[i] * vx[i] + vy[i] * vy[i]);
+
+        double U = -1.0 / dist(0, 1) - 1.0 / dist(0, 2) - 1.0 / dist(1, 2);
+
+        if (T + U >= 0) continue;
+
+        // Center of mass and momentum (but do NOT canonicalize)
+        double cm_x = (x[0] + x[1] + x[2]) / 3.0;
+        double cm_y = (y[0] + y[1] + y[2]) / 3.0;
         for (int i = 0; i < 3; ++i) {
-            if (std::abs(x[i]) > POSITION_MAX_DIST || std::abs(y[i]) > POSITION_MAX_DIST) {
-                too_far = true;
-                break;
-            }
+            x[i] -= cm_x;
+            y[i] -= cm_y;
         }
-        if (too_far) continue;
-
-        found_valid = true;
-        break;  // acceptable positions
-    }
-
-    // Fallback: if no valid positions found after 100 attempts, generate with relaxed constraints
-    if (!found_valid) {
+        double cm_vx = (vx[0] + vx[1] + vx[2]) / 3.0;
+        double cm_vy = (vy[0] + vy[1] + vy[2]) / 3.0;
         for (int i = 0; i < 3; ++i) {
-            x[i] = rand_uniform(POSITION_BOX_MIN, POSITION_BOX_MAX);
-            y[i] = rand_uniform(POSITION_BOX_MIN, POSITION_BOX_MAX);
+            vx[i] -= cm_vx;
+            vy[i] -= cm_vy;
         }
-    }
 
-    // Center positions
-    double cm_x = (x[0] + x[1] + x[2]) / 3.0;
-    double cm_y = (y[0] + y[1] + y[2]) / 3.0;
-    for (int i = 0; i < 3; ++i) {
-        x[i] -= cm_x;
-        y[i] -= cm_y;
+        return;
     }
-
-    // Generate random velocities, then zero total momentum
-    for (int i = 0; i < 3; ++i) {
-        vx[i] = rand_uniform(VELOCITY_RANGE_MIN, VELOCITY_RANGE_MAX);
-        vy[i] = rand_uniform(VELOCITY_RANGE_MIN, VELOCITY_RANGE_MAX);
-    }
-
-    // Center velocities
-    double cm_vx = (vx[0] + vx[1] + vx[2]) / 3.0;
-    double cm_vy = (vy[0] + vy[1] + vy[2]) / 3.0;
-    for (int i = 0; i < 3; ++i) {
-        vx[i] -= cm_vx;
-        vy[i] -= cm_vy;
-    }
-
-    // Ensure bound (E < 0)
-    ensure_bound(state);
 }
 
 // ---------------------------------------------------------------------------
@@ -351,72 +472,71 @@ static double permutation_rotation_state_distance(
 {
     // Create normalized copies to ensure consistent reference frame
     double n1[STATE_SIZE], n2[STATE_SIZE];
-    std::memcpy(n1, s1, sizeof(double) * STATE_SIZE);
-    std::memcpy(n2, s2, sizeof(double) * STATE_SIZE);
+    std::copy(s1, s1 + STATE_SIZE, n1);
+    std::copy(s2, s2 + STATE_SIZE, n2);
     normalize_state(n1);
     normalize_state(n2);
     // Also normalize scale to catch size-scaled versions of the same orbit
     normalize_scale(n1);
     normalize_scale(n2);
 
+    // Pre-compute position arrays for faster access
+    const double *x1 = n1;
+    const double *y1 = n1 + 3;
+    const double *vx1 = n1 + 6;
+    const double *vy1 = n1 + 9;
+    const double *x2 = n2;
+    const double *y2 = n2 + 3;
+    const double *vx2 = n2 + 6;
+    const double *vy2 = n2 + 9;
+
     const int perms[6][3] = {
         {0,1,2},{0,2,1},{1,0,2},{1,2,0},{2,0,1},{2,1,0}
     };
     double best = INFINITY;
-    for (int p = 0; p < 6; ++p) {
-        // Find optimal rotation angle based on positions
-        double theta = optimal_rotation_angle(n1, n1 + 3, n2, n2 + 3, perms[p]);
-        
-        // Rotate n1 and compute distance
-        double c = std::cos(theta);
-        double s = std::sin(theta);
-        double d2 = 0.0;
-        for (int i = 0; i < 3; ++i) {
-            int j = perms[p][i];
-            // Rotate positions
-            double rx = n1[i] * c - n1[i + 3] * s;
-            double ry = n1[i] * s + n1[i + 3] * c;
-            // Rotate velocities
-            double rvx = n1[i + 6] * c - n1[i + 9] * s;
-            double rvy = n1[i + 6] * s + n1[i + 9] * c;
-            
-            double dx  = rx - n2[j];
-            double dy  = ry - n2[j + 3];
-            double dvx = rvx - n2[j + 6];
-            double dvy = rvy - n2[j + 9];
-            d2 += dx*dx + dy*dy + dvx*dvx + dvy*dvy;
-        }
-        if (d2 < best) best = d2;
-    }
     
-    // Also consider time-reversed version of s1 (negate all velocities)
-    double n1_reversed[STATE_SIZE];
-    std::memcpy(n1_reversed, n1, sizeof(double) * STATE_SIZE);
-    for (int i = 6; i < STATE_SIZE; ++i) {
-        n1_reversed[i] = -n1_reversed[i];
-    }
-    
-    for (int p = 0; p < 6; ++p) {
-        double theta = optimal_rotation_angle(n1_reversed, n1_reversed + 3, n2, n2 + 3, perms[p]);
-        
-        double c = std::cos(theta);
-        double s = std::sin(theta);
-        double d2 = 0.0;
-        for (int i = 0; i < 3; ++i) {
-            int j = perms[p][i];
-            double rx = n1_reversed[i] * c - n1_reversed[i + 3] * s;
-            double ry = n1_reversed[i] * s + n1_reversed[i + 3] * c;
-            double rvx = n1_reversed[i + 6] * c - n1_reversed[i + 9] * s;
-            double rvy = n1_reversed[i + 6] * s + n1_reversed[i + 9] * c;
+    // Helper lambda to compute distance for a given velocity configuration
+    auto compute_dist = [&](const double* vx1_local, const double* vy1_local) {
+        double best_local = INFINITY;
+        for (int p = 0; p < 6; ++p) {
+            // Find optimal rotation angle based on positions
+            double theta = optimal_rotation_angle(x1, y1, x2, y2, perms[p]);
             
-            double dx  = rx - n2[j];
-            double dy  = ry - n2[j + 3];
-            double dvx = rvx - n2[j + 6];
-            double dvy = rvy - n2[j + 9];
-            d2 += dx*dx + dy*dy + dvx*dvx + dvy*dvy;
+            // Compute cos and sin once, reuse for all bodies
+            double c = std::cos(theta);
+            double s = std::sin(theta);
+            double d2 = 0.0;
+            for (int i = 0; i < 3; ++i) {
+                int j = perms[p][i];
+                // Rotate positions
+                double rx = x1[i] * c - y1[i] * s;
+                double ry = x1[i] * s + y1[i] * c;
+                // Rotate velocities
+                double rvx = vx1_local[i] * c - vy1_local[i] * s;
+                double rvy = vx1_local[i] * s + vy1_local[i] * c;
+                
+                double dx  = rx - x2[j];
+                double dy  = ry - y2[j];
+                double dvx = rvx - vx2[j];
+                double dvy = rvy - vy2[j];
+                d2 += dx*dx + dy*dy + dvx*dvx + dvy*dvy;
+            }
+            if (d2 < best_local) best_local = d2;
         }
-        if (d2 < best) best = d2;
+        return best_local;
+    };
+    
+    // Check normal orientation
+    best = compute_dist(vx1, vy1);
+    
+    // Check time-reversed orientation (negate velocities)
+    double vx1_rev[3], vy1_rev[3];
+    for (int i = 0; i < 3; ++i) {
+        vx1_rev[i] = -vx1[i];
+        vy1_rev[i] = -vy1[i];
     }
+    double best_rev = compute_dist(vx1_rev, vy1_rev);
+    if (best_rev < best) best = best_rev;
     
     return std::sqrt(best);
 }

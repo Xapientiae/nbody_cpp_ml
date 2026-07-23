@@ -20,7 +20,7 @@
 #include <string>
 #include <algorithm>
 #include <chrono>
-#include <sys/stat.h>
+#include <filesystem>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -68,13 +68,37 @@ static Config parse_args(int argc, char *argv[]) {
         if (eq != std::string::npos) key = key.substr(0, eq);
 
         if (key == "--popsize" || key == "-p") {
-            cfg.pop_size = (size_t)std::atol(get_val());
+            char *end = nullptr;
+            long val = std::strtol(get_val(), &end, 10);
+            if (end == nullptr || *end != '\0') {
+                fprintf(stderr, "ERROR: invalid --popsize value\n");
+                exit(1);
+            }
+            cfg.pop_size = (size_t)val;
         } else if (key == "--generations" || key == "-g") {
-            cfg.generations = std::atoi(get_val());
+            char *end = nullptr;
+            long val = std::strtol(get_val(), &end, 10);
+            if (end == nullptr || *end != '\0') {
+                fprintf(stderr, "ERROR: invalid --generations value\n");
+                exit(1);
+            }
+            cfg.generations = (int)val;
         } else if (key == "--seed" || key == "-s") {
-            cfg.seed = std::atoi(get_val());
+            char *end = nullptr;
+            long val = std::strtol(get_val(), &end, 10);
+            if (end == nullptr || *end != '\0') {
+                fprintf(stderr, "ERROR: invalid --seed value\n");
+                exit(1);
+            }
+            cfg.seed = (int)val;
         } else if (key == "--mutation-sigma" || key == "-m") {
-            cfg.mutation_sigma = std::atof(get_val());
+            char *end = nullptr;
+            double val = std::strtod(get_val(), &end);
+            if (end == nullptr || *end != '\0') {
+                fprintf(stderr, "ERROR: invalid --mutation-sigma value\n");
+                exit(1);
+            }
+            cfg.mutation_sigma = val;
         } else if (key == "--output-dir") {
             cfg.output_dir = get_val();
             cfg.archive_file = cfg.output_dir + "/archive.txt";
@@ -107,10 +131,7 @@ static Config parse_args(int argc, char *argv[]) {
 // Ensure directory exists
 // ---------------------------------------------------------------------------
 static void ensure_dir(const std::string& dir) {
-    struct stat st;
-    if (stat(dir.c_str(), &st) != 0) {
-        mkdir(dir.c_str(), 0755);
-    }
+    std::filesystem::create_directories(dir);
 }
 
 // ---------------------------------------------------------------------------
@@ -160,15 +181,15 @@ static void append_history(const std::string& filename, int gen,
 }
 
 // ---------------------------------------------------------------------------
-// Compute archive penalty using exponential decay.
-// Penalty = max_penalty * exp(-distance / threshold * exponent)
+// Compute archive penalty using linear decay.
+// Penalty = max_penalty * (1 - distance / threshold)
 // At distance 0: penalty = max_penalty
-// At distance = threshold: penalty = max_penalty * exp(-exponent)
-// At distance >> threshold: penalty approaches 0
+// At distance = threshold: penalty = 0
+// At distance > threshold: penalty = 0
 // ---------------------------------------------------------------------------
 static double compute_archive_penalty(double distance, double threshold) {
     if (distance >= threshold) return 0.0;
-    return ARCHIVE_PENALTY_MAX * std::exp(-distance / threshold * ARCHIVE_PENALTY_EXPONENT);
+    return ARCHIVE_PENALTY_MAX * (1.0 - distance / threshold);
 }
 
 // ---------------------------------------------------------------------------
@@ -289,9 +310,18 @@ int main(int argc, char *argv[]) {
     // --- Evaluate generation 0 ---
     if (cfg.verbose) fprintf(stderr, "# Gen 0: evaluating...\n");
 
+    const int progress_interval = std::max(1, (int)(cfg.pop_size / 20)); // Report every 5%
+
     #pragma omp parallel for
     for (size_t i = 0; i < cfg.pop_size; ++i) {
         fitness[i] = evaluate_fitness(population[i].data());
+
+        // Progress indicator (thread-safe)
+        #pragma omp critical
+        if (cfg.verbose && (i + 1) % progress_interval == 0) {
+            fprintf(stderr, "#   Progress: %zu/%zu (%.0f%%)\n",
+                    i + 1, cfg.pop_size, 100.0 * (i + 1) / cfg.pop_size);
+        }
     }
 
     // --- Track best ---

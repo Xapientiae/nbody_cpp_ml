@@ -39,6 +39,14 @@ constexpr double RETURN_BONUS_SIGMA = 0.5;  // sigma for return distance bonus
 constexpr double TRANSIENT_RATIO = 20;      // transient period = MAX_STEPS / this
 
 // ---------------------------------------------------------------------------
+// Generator Parameters (for generator.hpp integration)
+// ---------------------------------------------------------------------------
+constexpr double GENERATOR_POS_RANGE = 2.0;     // position range [-range, +range]
+constexpr double GENERATOR_VEL_RANGE = 2.0;     // velocity range [-range, +range]
+constexpr double GENERATOR_MIN_DIST = 0.2;      // minimum distance between bodies
+constexpr double GENERATOR_TARGET_R2 = 12.0;    // target sum of squared radii
+
+// ---------------------------------------------------------------------------
 // Archive Checkpoint Times (for time-aware similarity detection)
 // These are step numbers at which to check archive distance
 // ---------------------------------------------------------------------------
