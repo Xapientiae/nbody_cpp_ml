@@ -79,24 +79,6 @@ struct SimulationResult {
     int    checkpoint_count;      // number of checkpoints actually recorded
 };
 
-// Apply 2D rotation to state
-static void rotate_state(double state[STATE_SIZE], double theta) {
-    double c = std::cos(theta);
-    double s = std::sin(theta);
-    double *x  = state;       // [0..2]
-    double *y  = state + 3;   // [3..5]
-    double *vx = state + 6;   // [6..8]
-    double *vy = state + 9;   // [9..11]
-    for (int i = 0; i < 3; ++i) {
-        double xi = x[i], yi = y[i];
-        x[i] = xi * c - yi * s;
-        y[i] = xi * s + yi * c;
-        double vxi = vx[i], vyi = vy[i];
-        vx[i] = vxi * c - vyi * s;
-        vy[i] = vxi * s + vyi * c;
-    }
-}
-
 // Compute optimal rotation angle
 static double optimal_rotation_angle(
     const double x1[3], const double y1[3],
@@ -592,6 +574,11 @@ static double permutation_rotation_state_distance(
     const double s1[STATE_SIZE],
     const double s2[STATE_SIZE]);
 
+// Forward declaration
+static double canonical_distance(
+    const double s1[STATE_SIZE],
+    const double s2[STATE_SIZE]);
+
 // Diversity penalty
 static double crowding_distance(
     const double state[STATE_SIZE],
@@ -601,13 +588,50 @@ static double crowding_distance(
     double min_dist = INFINITY;
     for (size_t j = 0; j < population.size(); ++j) {
         if (j == exclude_idx) continue;
-        double d = permutation_rotation_state_distance(state, population[j].data());
+        // Use canonical_distance since all population members are canonical
+        double d = canonical_distance(state, population[j].data());
         if (d < min_dist) min_dist = d;
     }
     return min_dist;
 }
 
+// Distance between two canonical states (optimized - no normalization needed)
+// Assumes both states are already canonical (normalized + canonicalized)
+// Note: Time reversal is NOT needed because canonicalizeSystem() enforces positive angular momentum
+static double canonical_distance(
+    const double s1[STATE_SIZE],
+    const double s2[STATE_SIZE])
+{
+    const double *x1 = s1;
+    const double *y1 = s1 + 3;
+    const double *vx1 = s1 + 6;
+    const double *vy1 = s1 + 9;
+    const double *x2 = s2;
+    const double *y2 = s2 + 3;
+    const double *vx2 = s2 + 6;
+    const double *vy2 = s2 + 9;
+
+    // Since states are canonical, permutation is fixed (sorted by y, then x)
+    // All canonical states have positive angular momentum, so no time reversal needed
+    double d2 = 0.0;
+    for (int i = 0; i < 3; ++i) {
+        double dx = x1[i] - x2[i];
+        double dy = y1[i] - y2[i];
+        double dvx = vx1[i] - vx2[i];
+        double dvy = vy1[i] - vy2[i];
+        d2 += dx*dx + dy*dy + dvx*dvx + dvy*dvy;
+    }
+    
+    return std::sqrt(d2);
+}
+
+// Forward declaration
+static double archive_distance(
+    const double state[STATE_SIZE],
+    const std::vector<std::vector<double>>& archive);
+
 // Permutation + rotation-aware distance (full state)
+// Use this only for non-canonical states
 static double permutation_rotation_state_distance(
     const double s1[STATE_SIZE],
     const double s2[STATE_SIZE])
@@ -673,11 +697,6 @@ static double permutation_rotation_state_distance(
     return std::sqrt(best);
 }
 
-// Forward declaration
-static double archive_distance(
-    const double state[STATE_SIZE],
-    const std::vector<std::vector<double>>& archive);
-
 // Compute archive penalty (linear decay)
 static double compute_archive_penalty(double distance, double threshold) {
     if (distance >= threshold) return 0.0;
@@ -710,6 +729,7 @@ static bool is_novel_checkpoints(
 }
 
 // Archive distance
+// Uses canonical_distance since both state and archive entries are canonical
 static double archive_distance(
     const double state[STATE_SIZE],
     const std::vector<std::vector<double>>& archive)
@@ -717,7 +737,8 @@ static double archive_distance(
     if (archive.empty()) return INFINITY;
     double min_dist = INFINITY;
     for (const auto& entry : archive) {
-        double d = permutation_rotation_state_distance(state, entry.data());
+        // Use optimized canonical distance since all states are canonical
+        double d = canonical_distance(state, entry.data());
         if (d < min_dist) min_dist = d;
     }
     return min_dist;
@@ -793,8 +814,7 @@ static size_t load_states_from_archive(const char *filename,
             state[3] = vals[1]; state[4] = vals[3]; state[5] = vals[5];
             state[6] = vals[6]; state[7] = vals[8]; state[8] = vals[10];
             state[9] = vals[7]; state[10] = vals[9]; state[11] = vals[11];
-            normalize_state(state.data());
-            normalize_scale(state.data());
+            // Canonicalize handles all normalization (CM, scale, rotation, permutation)
             canonicalize_state(state.data());
             archive.push_back(state);
             ++count;
