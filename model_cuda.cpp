@@ -1,13 +1,13 @@
 /*
- * model.cpp — Evolutionary search for stable 3-body orbits
+ * model_cuda.cpp — GPU-accelerated evolutionary search for stable 3-body orbits
  *
- * Compile: g++ -std=c++17 -O3 -fopenmp model.cpp -o model
- * Run:     ./model --popsize=256 --generations=50 --seed=$(date +%s)
+ * Compile: make CUDA=1
+ * Run:     ./model_cuda --popsize=256 --generations=50 --seed=$(date +%s)
  *
  * Features:
- *   - Random search (default) or refine existing orbit (--refine)
- *   - Archive of found orbits (--archive)
- *   - Penalty for similarity to archive (encourages diversity)
+ *   - CUDA-accelerated fitness evaluation
+ *   - CUDA-accelerated distance matrix computation
+ *   - Falls back to CPU if CUDA not available
  *   - All output goes to output/ directory
  */
 
@@ -27,6 +27,7 @@
 #endif
 
 #include "population.hpp"
+#include "cuda_simulation.cuh"
 
 // ---------------------------------------------------------------------------
 // Command-line configuration
@@ -40,12 +41,13 @@ struct Config {
     int    elite_count        = 2;
     double diversity_threshold = DEFAULT_DIVERSITY_THRESHOLD;
     double diversity_penalty  = DEFAULT_DIVERSITY_PENALTY;
-    double archive_dist_threshold = DEFAULT_ARCHIVE_DIST_THRESHOLD;   // min dist from archive entries
-    double archive_penalty    = DEFAULT_ARCHIVE_PENALTY;       // penalty fraction if too close to archive
+    double archive_dist_threshold = DEFAULT_ARCHIVE_DIST_THRESHOLD;
+    double archive_penalty    = DEFAULT_ARCHIVE_PENALTY;
     bool   verbose            = true;
+    bool   use_cuda           = true;
     std::string output_dir    = "output";
     std::string archive_file  = "output/archive.txt";
-    std::string refine_file   = "";        // if set, refine this orbit instead of random search
+    std::string refine_file   = "";
 };
 
 static Config parse_args(int argc, char *argv[]) {
@@ -105,6 +107,8 @@ static Config parse_args(int argc, char *argv[]) {
             cfg.archive_file = get_val();
         } else if (key == "--refine") {
             cfg.refine_file = get_val();
+        } else if (key == "--cpu") {
+            cfg.use_cuda = false;
         } else if (key == "--quiet" || key == "-q") {
             cfg.verbose = false;
         } else if (key == "--help" || key == "-h") {
@@ -116,6 +120,7 @@ static Config parse_args(int argc, char *argv[]) {
             printf("  --output-dir DIR        Output directory (default: output)\n");
             printf("  --archive FILE          Archive file (default: output/archive.txt)\n");
             printf("  --refine FILE           Refine existing orbit from FILE\n");
+            printf("  --cpu                   Force CPU mode (disable CUDA)\n");
             printf("  --quiet, -q             Suppress progress output\n");
             printf("  --help, -h              Show this help\n");
             exit(0);
@@ -134,7 +139,7 @@ static void ensure_dir(const std::string& dir) {
 }
 
 // ---------------------------------------------------------------------------
-// Save best state to file (3body.cpp compatible)
+// Save state to file
 // ---------------------------------------------------------------------------
 static void save_state(const std::string& filename, const double state[STATE_SIZE],
                        double score, int steps, double closest_return)
@@ -180,46 +185,11 @@ static void append_history(const std::string& filename, int gen,
 }
 
 // ---------------------------------------------------------------------------
-// Compute archive penalty using linear decay.
-// Penalty = max_penalty * (1 - distance / threshold)
-// At distance 0: penalty = max_penalty
-// At distance = threshold: penalty = 0
-// At distance > threshold: penalty = 0
+// Compute archive penalty
 // ---------------------------------------------------------------------------
 static double compute_archive_penalty(double distance, double threshold) {
     if (distance >= threshold) return 0.0;
     return ARCHIVE_PENALTY_MAX * (1.0 - distance / threshold);
-}
-
-// ---------------------------------------------------------------------------
-// Compute archive distance using checkpoint states (time-aware similarity).
-// Checks at multiple time points and returns the minimum distance.
-// This catches systems that might look similar at different times.
-// ---------------------------------------------------------------------------
-static double archive_distance_checkpoints(
-    const SimulationResult& sim_result,
-    const std::vector<std::vector<double>>& archive)
-{
-    if (archive.empty()) return INFINITY;
-    
-    double min_dist = INFINITY;
-    for (int c = 0; c < sim_result.checkpoint_count; ++c) {
-        double d = archive_distance(sim_result.checkpoint_states[c], archive);
-        if (d < min_dist) min_dist = d;
-    }
-    return min_dist;
-}
-
-// ---------------------------------------------------------------------------
-// Check if state is novel enough to add to archive (using checkpoint states)
-// ---------------------------------------------------------------------------
-static bool is_novel_checkpoints(
-    const SimulationResult& sim_result,
-    const std::vector<std::vector<double>>& archive,
-    double threshold)
-{
-    double d = archive_distance_checkpoints(sim_result, archive);
-    return d >= threshold;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,44 +198,50 @@ static bool is_novel_checkpoints(
 int main(int argc, char *argv[]) {
     Config cfg = parse_args(argc, argv);
 
-    // Ensure output directory
     ensure_dir(cfg.output_dir);
 
-    // --- Seed ---
+    // Seed RNG
     if (cfg.seed == 0) {
         cfg.seed = (int)std::time(nullptr) ^
                    (int)std::chrono::steady_clock::now().time_since_epoch().count();
     }
-    
-    // Seed the thread-local RNGs in population.hpp
-    // Each thread will get a different seed derived from the main seed
+
     #ifdef _OPENMP
         #pragma omp parallel
         {
             int thread_num = omp_get_thread_num();
-            // Derive a unique seed for each thread
             unsigned int thread_seed = cfg.seed + thread_num * 1000;
             rng_local.seed(thread_seed);
         }
     #endif
 
-    // --- Load archive ---
+    // Initialize CUDA if requested
+    bool cuda_available = false;
+    if (cfg.use_cuda) {
+        cuda_available = (cuda_init() != 0);
+        if (!cuda_available && cfg.verbose) {
+            fprintf(stderr, "# CUDA not available, falling back to CPU\n");
+        }
+    }
+
+    if (cfg.verbose && cuda_available) {
+        fprintf(stderr, "# Using CUDA acceleration\n");
+    }
+
+    // Load archive
     std::vector<std::vector<double>> archive;
     size_t archive_count = load_states_from_archive(cfg.archive_file.c_str(), archive);
 
-    // --- Determine base state (if refining) ---
+    // Determine base state (if refining)
     std::vector<double> refine_base(STATE_SIZE);
     bool is_refine = !cfg.refine_file.empty();
 
     if (is_refine) {
         if (load_state_from_file(cfg.refine_file.c_str(), refine_base.data()) != 0) {
-            fprintf(stderr, "ERROR: failed to load state from '%s'\n",
-                    cfg.refine_file.c_str());
+            fprintf(stderr, "ERROR: failed to load state from '%s'\n", cfg.refine_file.c_str());
             return 1;
         }
-        // Normalize the loaded state to ensure consistent reference frame
         normalize_state(refine_base.data());
-        // If mutation_sigma wasn't explicitly set (still default 0.05), use a smaller one
         cfg.mutation_sigma = std::min(cfg.mutation_sigma, 0.02);
 
         if (cfg.verbose) {
@@ -273,9 +249,9 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // --- Echo config ---
+    // Echo config
     if (cfg.verbose) {
-        fprintf(stderr, "# Model: Evolutionary 3-body orbit finder\n");
+        fprintf(stderr, "# Model: GPU-accelerated evolutionary 3-body orbit finder\n");
         fprintf(stderr, "# Population: %zu  Generations: %d  Seed: %d\n",
                 cfg.pop_size, cfg.generations, cfg.seed);
         fprintf(stderr, "# Mutation sigma: %.4f  Tournament k: %zu  Elite: %d\n",
@@ -283,18 +259,19 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "# Output dir: %s\n", cfg.output_dir.c_str());
         fprintf(stderr, "# Archive: %s (%zu entries)\n",
                 cfg.archive_file.c_str(), archive_count);
+        fprintf(stderr, "# Mode: %s\n", cuda_available ? "CUDA GPU" : "CPU (fallback)");
         if (is_refine) {
             fprintf(stderr, "# Refining orbit from: %s\n", cfg.refine_file.c_str());
         }
         fprintf(stderr, "#\n");
     }
 
-    // --- Allocate population ---
+    // Allocate population
     std::vector<std::vector<double>> population(cfg.pop_size,
                                                  std::vector<double>(STATE_SIZE));
     std::vector<FitnessResult> fitness(cfg.pop_size);
 
-    // --- Generate initial population ---
+    // Generate initial population
     if (cfg.verbose) fprintf(stderr, "# Gen 0: generating population...\n");
 
     if (is_refine) {
@@ -306,29 +283,72 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // --- Evaluate generation 0 ---
+    // Evaluate generation 0
     if (cfg.verbose) fprintf(stderr, "# Gen 0: evaluating...\n");
 
-    const int progress_interval = std::max(1, (int)(cfg.pop_size / 20)); // Report every 5%
+    const int progress_interval = std::max(1, (int)(cfg.pop_size / 20));
 
-    #pragma omp parallel for
-    for (size_t i = 0; i < cfg.pop_size; ++i) {
-        fitness[i] = evaluate_fitness(population[i].data());
+    if (cuda_available) {
+        // CUDA path: copy population to GPU, evaluate all at once
+        size_t pop_bytes = cfg.pop_size * STATE_SIZE * sizeof(double);
+        size_t results_bytes = cfg.pop_size * sizeof(CudaFitnessResult);
 
-        // Progress indicator (thread-safe)
-        #pragma omp critical
-        if (cfg.verbose && (i + 1) % progress_interval == 0) {
-            fprintf(stderr, "#   Progress: %zu/%zu (%.0f%%)\n",
-                    i + 1, cfg.pop_size, 100.0 * (i + 1) / cfg.pop_size);
+        double *d_population;
+        CudaFitnessResult *d_results;
+
+        cudaMalloc(&d_population, pop_bytes);
+        cudaMalloc(&d_results, results_bytes);
+
+        // Copy population to GPU
+        cudaMemcpy(d_population, population[0].data(), pop_bytes, cudaMemcpyHostToDevice);
+
+        // Evaluate on GPU
+        cudaError_t err = cuda_evaluate_fitness(d_population, d_results, cfg.pop_size);
+        if (err != cudaSuccess) {
+            fprintf(stderr, "ERROR: CUDA evaluation failed: %s\n", cudaGetErrorString(err));
+            cuda_available = false;
+        } else {
+            // Copy results back
+            std::vector<CudaFitnessResult> cuda_results(cfg.pop_size);
+            cudaMemcpy(cuda_results.data(), d_results, results_bytes, cudaMemcpyDeviceToHost);
+
+            // Convert to FitnessResult
+            for (size_t i = 0; i < cfg.pop_size; ++i) {
+                fitness[i].score = cuda_results[i].score;
+                fitness[i].steps = cuda_results[i].steps;
+                fitness[i].closest_return = cuda_results[i].closest_return;
+                fitness[i].sim_result = cuda_results[i].sim_result;
+            }
+        }
+
+        cudaFree(d_population);
+        cudaFree(d_results);
+
+        if (!cuda_available && cfg.verbose) {
+            fprintf(stderr, "# Falling back to CPU for this generation\n");
         }
     }
 
-    // --- Track best ---
+    if (!cuda_available) {
+        // CPU fallback
+        #pragma omp parallel for
+        for (size_t i = 0; i < cfg.pop_size; ++i) {
+            fitness[i] = evaluate_fitness(population[i].data());
+
+            #pragma omp critical
+            if (cfg.verbose && (i + 1) % progress_interval == 0) {
+                fprintf(stderr, "#   Progress: %zu/%zu (%.0f%%)\n",
+                        i + 1, cfg.pop_size, 100.0 * (i + 1) / cfg.pop_size);
+            }
+        }
+    }
+
+    // Track best
     double best_score = -1.0;
     std::vector<double> best_state(STATE_SIZE);
     int best_steps = 0;
     double best_return = 0.0;
-    SimulationResult best_sim_result;  // Store full simulation result for checkpoint-based archive check
+    SimulationResult best_sim_result;
 
     auto update_best = [&](size_t idx) {
         if (fitness[idx].score > best_score) {
@@ -342,7 +362,7 @@ int main(int argc, char *argv[]) {
 
     for (size_t i = 0; i < cfg.pop_size; ++i) update_best(i);
 
-    // --- History for gen 0 ---
+    // History for gen 0
     double avg = 0.0;
     for (size_t i = 0; i < cfg.pop_size; ++i) avg += fitness[i].score;
     avg /= cfg.pop_size;
@@ -355,7 +375,7 @@ int main(int argc, char *argv[]) {
                 best_score, avg, best_steps, best_return);
     }
 
-    // --- Evolutionary loop ---
+    // Evolutionary loop
     for (int gen = 1; gen <= cfg.generations; ++gen) {
         auto t_start = std::chrono::steady_clock::now();
 
@@ -379,8 +399,6 @@ int main(int argc, char *argv[]) {
         // Crossover + evaluation
         #pragma omp parallel for
         for (size_t i = (size_t)cfg.elite_count; i < cfg.pop_size; ++i) {
-            // tournament_select accepts scores as vector<double>&; pass the fitness scores directly
-            // We create a local view since tournament_select expects a vector reference
             std::vector<double> scores(cfg.pop_size);
             for (size_t j = 0; j < cfg.pop_size; ++j) scores[j] = fitness[j].score;
 
@@ -390,17 +408,15 @@ int main(int argc, char *argv[]) {
             crossover(population[p1].data(), population[p2].data(),
                       next_pop[i].data(), cfg.mutation_sigma);
 
-            // Evaluate
             next_fitness[i] = evaluate_fitness(next_pop[i].data());
 
-            // Archive penalty: exponential decay based on distance at checkpoints
-            // This catches systems that might look similar at different times
+            // Archive penalty
             double d_arch = archive_distance_checkpoints(next_fitness[i].sim_result, archive);
             double penalty = compute_archive_penalty(d_arch, cfg.archive_dist_threshold);
             next_fitness[i].score *= (1.0 - penalty);
         }
 
-        // Diversity penalty within population
+        // Diversity penalty
         for (size_t i = 0; i < cfg.pop_size; ++i) {
             double d = crowding_distance(next_pop[i].data(), next_pop, i);
             if (d < cfg.diversity_threshold) {
@@ -429,17 +445,13 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "# Gen %d: best=%.4g  avg=%.4g  steps=%d  return=%.4g  [%.2fs]\n",
                     gen, best_score, avg, best_steps, best_return, elapsed);
         }
-
     }
 
-    // --- Final save (append mode) ---
+    // Final save
     std::string best_file = cfg.output_dir + "/best.txt";
     save_state(best_file, best_state.data(), best_score, best_steps, best_return);
 
-    // Add final best to archive ONLY if it has MAX_STEPS (full lifetime)
-    // Use checkpoint-based comparison to catch time-aware similarity
     if (best_steps >= MAX_STEPS && is_novel_checkpoints(best_sim_result, archive, cfg.archive_dist_threshold)) {
-        // Normalize before saving to ensure consistent reference frame and size
         std::vector<double> best_state_normalized = best_state;
         normalize_state(best_state_normalized.data());
         normalize_scale(best_state_normalized.data());
@@ -459,6 +471,11 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "# History: %s\n", history_file.c_str());
         fprintf(stderr, "#\n# To visualize:\n");
         fprintf(stderr, "#   ./3body %s | python3 visualize.py\n", best_file.c_str());
+    }
+
+    // Cleanup CUDA
+    if (cuda_available) {
+        cuda_cleanup();
     }
 
     return 0;

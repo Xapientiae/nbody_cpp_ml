@@ -25,7 +25,7 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include "simulation.hpp"
+#include "population.hpp"
 
 // ---------------------------------------------------------------------------
 // Read initial conditions from a file/stream

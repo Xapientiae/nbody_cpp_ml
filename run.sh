@@ -135,7 +135,7 @@ run_deep() {
 
 run_lucky() {
     log "Lucky search (popsize=50000, generations=1)..."
-    ./model --popsize=50000 --generations=1 2>&1 | tee -a "$LOG" | grep -E '(Gen |Done)'
+    ./model --popsize=500 --generations=1 2>&1 | tee -a "$LOG" | grep -E '(Gen |Done)'
     ok "Lucky search complete"
 }
 
